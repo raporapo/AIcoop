@@ -87,16 +87,20 @@ export async function run(input: CommandInput): Promise<number> {
       return EXIT.ok;
     }
     const style = out.style;
+    const next: [string, string][] = [
+      [`aicoop logs ${created.id} --follow`, "実行の記録を見る"],
+      ["aicoop tasks", "タスクの一覧"],
+      [`aicoop cancel ${created.id}`, "取り消す"],
+    ];
+    const width = Math.max(...next.map(([c]) => c.length));
     out.lines([
       `${style.green("✓")} タスクを作りました：${style.bold(created.id)}`,
-      `    社員    ${cleanLine(created.member_id)}（部署 ${cleanLine(created.group_id)}）`,
-      `    目的    ${cleanLine(created.purpose)}`,
-      `    状態    ${taskStatusLabel(created.status, style)}`,
+      `    社員  ${cleanLine(created.member_id)}（部署 ${cleanLine(created.group_id)}）`,
+      `    目的  ${cleanLine(created.purpose)}`,
+      `    状態  ${taskStatusLabel(created.status, style)}`,
       "",
       style.bold("次に"),
-      `  ${style.cyan(`aicoop logs ${created.id} --follow`)}   実行の記録を見る`,
-      `  ${style.cyan("aicoop tasks")}   タスクの一覧`,
-      `  ${style.cyan(`aicoop cancel ${created.id}`)}   取り消す`,
+      ...next.map(([c, note]) => `  ${style.cyan(c.padEnd(width))}  ${note}`),
     ]);
     return EXIT.ok;
   }

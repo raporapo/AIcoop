@@ -94,10 +94,13 @@ describe("11.7：知らないコマンド・オプションには「もしかし
     expect((await cli.run(["restart"])).stderr).toContain("aicoop stop");
   });
 
-  it("まとまりの中の打ち間違い", async () => {
+  it("まとまりの中の打ち間違い・まとまりの名前の打ち間違い", async () => {
     const r = await cli.run(["secret", "lsit"]);
     expect(r.code).toBe(2);
     expect(r.stderr).toContain("aicoop secret list");
+    const g = await cli.run(["scret", "list"]);
+    expect(g.code).toBe(2);
+    expect(g.stderr).toContain("もしかして aicoop secret list");
   });
 
   it("まとまりだけ（aicoop secret）なら、続けて書くものを出す", async () => {

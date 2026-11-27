@@ -38,6 +38,13 @@ export interface DaemonEntry {
   readonly startRun: StartRun;
 }
 
+/** 本体が入っていないときの知らせ（aicoop daemon・aicoop start） */
+export const DAEMON_MISSING =
+  "この aicoop には、まだ制御サーバーの本体が入っていません（P1 の途中）";
+export const DAEMON_MISSING_HINTS: readonly string[] = [
+  "制御サーバー（startDaemon）と実行（startRun）が入った版の aicoop を使ってください",
+];
+
 export async function loadDaemonEntry(): Promise<DaemonEntry | null> {
   const mod = (await import("@aicoop/daemon")) as unknown as Record<string, unknown>;
   const { startDaemon, startRun } = mod;

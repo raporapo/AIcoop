@@ -11,7 +11,12 @@ import { CliError } from "../errors.ts";
 import { EXIT } from "../exit-codes.ts";
 import { requireInitialized } from "../home.ts";
 import { renderIssues } from "../ui/issues.ts";
-import { configIssuesOf, type DaemonHandle } from "./daemon-entry.ts";
+import {
+  configIssuesOf,
+  DAEMON_MISSING,
+  DAEMON_MISSING_HINTS,
+  type DaemonHandle,
+} from "./daemon-entry.ts";
 
 export async function run(input: CommandInput): Promise<number> {
   const { home, values, err, ctx } = input;
@@ -30,13 +35,7 @@ export async function run(input: CommandInput): Promise<number> {
   }
 
   const entry = await ctx.deps.loadDaemonEntry();
-  if (entry === null) {
-    throw new CliError(
-      EXIT.failure,
-      "この aicoop には、まだ制御サーバーの本体が入っていません（P1 の途中）",
-      ["制御サーバー（startDaemon）と実行（startRun）が入った版の aicoop を使ってください"],
-    );
-  }
+  if (entry === null) throw new CliError(EXIT.failure, DAEMON_MISSING, DAEMON_MISSING_HINTS);
 
   const drivers = await ctx.deps.createDrivers(home, ctx.platform);
   if (drivers.vm === undefined) {

@@ -16,6 +16,7 @@ import { EXIT } from "../exit-codes.ts";
 import { requireInitialized, shortPath } from "../home.ts";
 import { renderIssues } from "../ui/issues.ts";
 import { cleanLine } from "../ui/text.ts";
+import { DAEMON_MISSING, DAEMON_MISSING_HINTS } from "./daemon-entry.ts";
 
 const POLL_MS = 200;
 /** 起動を待つ長さ（POLL_MS の回数で数える） */
@@ -56,6 +57,9 @@ export async function run(input: CommandInput): Promise<number> {
     err.line("直したら、aicoop check で確かめてから、もう一度 aicoop start してください。");
     return EXIT.failure;
   }
+  if ((await ctx.deps.loadDaemonEntry()) === null) {
+    throw new CliError(EXIT.failure, DAEMON_MISSING, DAEMON_MISSING_HINTS);
+  }
 
   const logFile = join(paths.logsDir, CONSOLE_LOG);
   const child = ctx.deps.spawnDaemon(home, logFile);
@@ -81,6 +85,11 @@ export async function run(input: CommandInput): Promise<number> {
     out.line(
       `${style.green("✓")} 制御サーバーを起動しました（http://127.0.0.1:${info.port}、pid ${info.pid}）`,
     );
+    if (ctx.platform === "win32") {
+      out.line(
+        `    ${style.yellow("注意：")}Windows では vm の箱が動かないので、vm の部署のタスクは失敗します。WSL2 の中で動かしてください`,
+      );
+    }
     out.line(`    ログ      ${shortPath(paths.logsDir, ctx.userHome)}`);
     out.line(
       `    様子を見る  ${style.cyan("aicoop status")}　止める  ${style.cyan("aicoop stop")}`,

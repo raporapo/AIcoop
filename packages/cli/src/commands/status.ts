@@ -10,7 +10,7 @@ import { readTimezone, requireInitialized } from "../home.ts";
 import { renderIssues } from "../ui/issues.ts";
 import { TASK_STATUS_LABELS, TRIGGER_LABELS, USAGE_LABELS } from "../ui/labels.ts";
 import { renderTable } from "../ui/table.ts";
-import { cleanLine } from "../ui/text.ts";
+import { cleanLine, padEnd } from "../ui/text.ts";
 import { formatTime } from "../ui/time.ts";
 
 export async function run(input: CommandInput): Promise<number> {
@@ -31,7 +31,8 @@ export async function run(input: CommandInput): Promise<number> {
   const tz = await readTimezone(home);
   const style = out.style;
   const t = (iso: string | null | undefined) => (iso ? formatTime(iso, tz) : "—");
-  const label = (text: string) => style.bold(text.padEnd(0));
+  /** 見出しの幅をそろえる（いちばん長い「制御サーバー」に合わせる） */
+  const label = (text: string) => style.bold(padEnd(text, 12));
   const lines: string[] = [];
 
   lines.push(`${style.bold("AIcoop")}  ${cleanLine(status.company.name)}（${status.company.id}）`);
@@ -84,7 +85,7 @@ export async function run(input: CommandInput): Promise<number> {
   lines.push(`${label("保留")}  承認待ち ${status.holds.pending}件`);
 
   if (status.triggers.length > 0) {
-    lines.push("", label("トリガー"));
+    lines.push("", style.bold("トリガー"));
     lines.push(
       ...renderTable(
         [{ header: "  ID" }, { header: "種類" }, { header: "社員" }, { header: `次（${tz}）` }],

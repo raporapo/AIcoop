@@ -115,7 +115,7 @@ async function dispatch(
   }
 
   const command = findCommand(name);
-  if (command === undefined) throw unknownCommand(name);
+  if (command === undefined) throw unknownCommand(name, rest[0]);
 
   const parsed = parseCommandArgs(
     command.name,
@@ -159,14 +159,20 @@ function printHelpFor(words: readonly string[], out: Printer): number {
   return EXIT.ok;
 }
 
-function unknownCommand(name: string): UsageError {
+/** `next` は、知らない名前のすぐ後ろの語（`aicoop scret list` の list） */
+function unknownCommand(name: string, next?: string): UsageError {
   const synonym = Object.hasOwn(SYNONYMS, name) ? SYNONYMS[name] : undefined;
   const group = name.split(" ")[0] ?? "";
   const candidates: string[] =
     Object.hasOwn(GROUPS, group) && name.includes(" ")
       ? COMMANDS.filter((c) => c.name.startsWith(`${group} `)).map((c: CommandDef) => c.name)
       : [...COMMANDS.map((c) => c.name), ...Object.keys(GROUPS)];
-  const close = synonym !== undefined ? [synonym] : suggest(name, candidates);
+  const close = (synonym !== undefined ? [synonym] : suggest(name, candidates)).map((c) =>
+    // まとまりの名前の打ち間違いなら、続く語まで含めて案内する（aicoop secret list）
+    Object.hasOwn(GROUPS, c) && next !== undefined && findCommand(`${c} ${next}`)
+      ? `${c} ${next}`
+      : c,
+  );
   return new UsageError(`知らないコマンドです：${name}`, [
     ...(close.length > 0 ? [`もしかして ${close.map((c) => `aicoop ${c}`).join("、")}`] : []),
     "コマンドの一覧は aicoop --help",

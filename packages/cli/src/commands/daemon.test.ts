@@ -189,6 +189,7 @@ describe("9.1 aicoop start：裏で起動し、API が応答するまで待つ",
     spawned = undefined;
     cli = createTestCli({
       deps: {
+        loadDaemonEntry: async () => fakeEntry().entry,
         spawnDaemon: (home, logFile) => {
           spawnCalls.push({ home, logFile });
           void startFakeDaemon(home, { pid: 9999 }).then((d) => {
@@ -229,6 +230,26 @@ describe("9.1 aicoop start：裏で起動し、API が応答するまで待つ",
     }
   });
 
+  it("制御サーバーの本体がまだ入っていない版なら、起こさずにそう言う（1）", async () => {
+    const missing = createTestCli({
+      deps: {
+        spawnDaemon: (home, logFile) => {
+          spawnCalls.push({ home, logFile });
+          return { pid: 1, exited: Promise.resolve(1) };
+        },
+      },
+    });
+    try {
+      await missing.run(["init"]);
+      const r = await missing.run(["start"]);
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain("まだ制御サーバーの本体が入っていません");
+      expect(spawnCalls).toHaveLength(0);
+    } finally {
+      missing.cleanup();
+    }
+  });
+
   it("設定にエラーがあれば、起こさずに issues を出す（1）", async () => {
     const path = join(cli.home, "aicoop.yaml");
     writeFileSync(
@@ -244,6 +265,7 @@ describe("9.1 aicoop start：裏で起動し、API が応答するまで待つ",
   it("起こした daemon がすぐ終わったら、ログの最後を見せる（1）", async () => {
     const crashing = createTestCli({
       deps: {
+        loadDaemonEntry: async () => fakeEntry().entry,
         spawnDaemon: (_home, logFile) => {
           writeFileSync(logFile, "起動の準備\nError: listen EADDRINUSE 127.0.0.1:7070\n");
           return { pid: 9998, exited: Promise.resolve(1) };
@@ -264,6 +286,7 @@ describe("9.1 aicoop start：裏で起動し、API が応答するまで待つ",
   it("待っても応答しなければ 1", async () => {
     const silent = createTestCli({
       deps: {
+        loadDaemonEntry: async () => fakeEntry().entry,
         spawnDaemon: () => ({ pid: 9997, exited: new Promise(() => undefined) }),
         sleep: async () => undefined,
       },
