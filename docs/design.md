@@ -2224,6 +2224,7 @@ P1 で、GitHub Actions の ubuntu-latest（x86_64、KVM を有効にしたも�
 | V-2 | **できる** | 箱の中の `curl http://aicoop.internal/mcp` が、ホストの `127.0.0.1:<ポート>` のサーバーに届いた |
 | V-4 | **できる** | `memoryMiB: 1536, cpus: 1` で QEMU が `-m 1536M -smp 1` で起動し、箱の中は CPU 1・`MemTotal` 約1.44 GiB。ホストから見た QEMU のメモリ（VmRSS）は、起動直後 約240 MiB、`claude --version` のあと 約410 MiB、`claude -p` が認証エラーで終わったあと 約590 MiB。仕事をしているときの使用量は、本物のログインで測ってから 5.1.6・11.3 の既定値を見直す |
 | V-6 | **できる** | 書き込める `/home/agent` の中に、読み取り専用の `/home/agent/.claude/skills` を重ねられた（読めて、書き込み・削除・作成・移動は失敗する） |
+| V-8 | **キーを確かめて使っている**（実物で効くかは一部だけ確かめた） | 公式ドキュメント（settings・managed MCP）で確かめたキーだけを使う。管理設定（`/etc/claude-code/managed-settings.json`）：`strictKnownMarketplaces: []`（プラグインのマーケットプレイスを全部禁止）、`allowedMcpServers: [{"serverUrl":"http://aicoop.internal/*"}]` と `allowManagedMcpServersOnly: true`（MCP は道具ゲートだけ）、`enableAllProjectMcpServers: false`、`disableAllHooks: true`（管理設定に書くとすべてのフックを止める）、`env`（`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`・`DISABLE_TELEMETRY`・`DISABLE_ERROR_REPORTING`）、`permissions.deny: ["WebSearch"]`。起動の引数：`--mcp-config /etc/aicoop/mcp.json --strict-mcp-config --disallowedTools WebSearch`。本物の Claude Code（2.1.332、無効なトークン）を vm の箱で起動し、init で MCP サーバーは `aicoop` だけが `connected`、MCP の道具は `mcp__aicoop__report_result` だけ、WebSearch は道具の一覧に無いことを確かめた（CI の `vm e2e`）。プラグイン・フックの禁止が実際に効くかは、本物のログインで仕事をさせるときに確かめる。CEO（5.11）の `--settings`・`--allowedTools` は P4 で確かめる |
 | V-9 | **動く**。駄目だったときの決定は使わない | 公式のネイティブ版の musl 版（`downloads.claude.ai` の `linux-x64-musl`）を Alpine のイメージに入れ、`claude --version` が `2.1.332 (Claude Code)` を返した |
 
 ---
