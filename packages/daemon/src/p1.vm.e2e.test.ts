@@ -233,6 +233,8 @@ describe.skipIf(!ENABLED)(
     let cancelled: GetTaskResponse;
     let cancelResponse: { status: number; wasActive: boolean };
     let timedOut: GetTaskResponse;
+    /** 本物の Claude Code（無効なトークン）で動かしたタスク */
+    let realClaude: GetTaskResponse;
     let db: StateDb | undefined;
     let audit: AuditRow[] = [];
 
@@ -367,6 +369,32 @@ describe.skipIf(!ENABLED)(
         `[5.5.5] 時間切れのタスク：${timedOut.task.status}（${Date.now() - timeoutStarted} ms）`,
       );
 
+      // 本物の Claude Code（無効なトークン）：aicoop image build で作ったベースのイメージ（営業部は packages なし）。
+      // ログインできずに終わるが、その前に MCP サーバー（道具ゲート）につなぎ、stream-json の init を出す
+      const realStarted = Date.now();
+      const base = await buildImage({ outputDir: imageDir(company.home), verbose: true });
+      console.log(
+        `[5.1.8] ベースのイメージを組み立てた（${Math.round((Date.now() - realStarted) / 1000)} 秒、Claude Code ${base.claudeCodeVersion}）`,
+      );
+      const realTask = await api({
+        method: "POST",
+        path: "/tasks",
+        body: {
+          member: "sales-researcher",
+          purpose: "業界のニュースを調べてまとめる",
+          done_when: "report_result で報告した",
+        },
+      });
+      expect(realTask.status).toBe(201);
+      realClaude = await waitForTaskEnd(api, realTask.json.task.id, RUN_TIMEOUT_MS);
+      for (const run of realClaude.runs) {
+        runDirLeft[run.id] = existsSync(paths.runDir(run.id));
+        qemuAfter[run.id] = await qemuLeftAfterRun();
+      }
+      console.log(
+        `[5.3.1] 本物の Claude Code（無効なトークン）のタスク：${realClaude.task.status}（${realClaude.task.error ?? ""}）`,
+      );
+
       expect((await api({ method: "POST", path: "/shutdown" })).status).toBe(200);
       await daemon.stopped;
       db = openStateDb(paths.stateDb);
@@ -394,8 +422,14 @@ describe.skipIf(!ENABLED)(
         console.log(`[診断] cron: ${JSON.stringify(cron)}`);
         dumpLogs(paths);
       }
-      // 手動・cron・取り消し・時間切れの4つ
-      expect(recorded.boxes).toHaveLength(4);
+      // 開発部（偽の claude）の手動・cron・取り消し・時間切れの4つと、営業部（本物の Claude Code）の1つ
+      expect(recorded.boxes.map((b) => b.spec.groupId)).toEqual([
+        "dev",
+        "dev",
+        "dev",
+        "dev",
+        "sales",
+      ]);
       expect(manual.task.status).toBe("done");
       expect(cron.task.status).toBe("done");
       for (const box of [manualBox, cronBox]) {
@@ -409,7 +443,10 @@ describe.skipIf(!ENABLED)(
       for (const box of recorded.boxes) {
         expect(JSON.stringify(box.spec.env)).not.toContain(secrets.github);
         expect(JSON.stringify(box.spec.env)).not.toContain(secrets.anthropic);
-        expect(box.spec.secrets.map((s) => s.env)).toEqual(["GITHUB_TOKEN"]);
+        // 資格を使うサービスの許可があるのは開発部だけ（営業部の web.read は資格を使わない）
+        expect(box.spec.secrets.map((s) => s.env)).toEqual(
+          box.spec.groupId === "dev" ? ["GITHUB_TOKEN"] : [],
+        );
         for (const exec of box.execs)
           expect(JSON.stringify(exec.env)).not.toContain(secrets.github);
       }
@@ -597,9 +634,11 @@ describe.skipIf(!ENABLED)(
 
     it("11.5：logs/ の下のどのファイルにも、本物の資格（と仮の札）が出ていない。箱の中から出力されたものは伏せ字になる", () => {
       const files = listFilesRecursive(paths.logsDir);
-      const runLogs = [...manual.runs, ...cron.runs, ...cancelled.runs, ...timedOut.runs].map((r) =>
-        paths.runLog(r.id),
-      );
+      const runLogs = [manual, cron, cancelled, timedOut, realClaude]
+        .flatMap((t) => t.runs)
+        .map((r) => paths.runLog(r.id));
+      // 失敗の理由（tasks.error）にも出ていない
+      expect(JSON.stringify(realClaude.task)).not.toContain(secrets.anthropic);
       expect(files).toEqual(expect.arrayContaining(runLogs));
       const placeholders = [manualBox, cronBox].map(
         (box) => /^GITHUB_TOKEN=(.*)$/m.exec(box.read("env"))?.[1] ?? "",
@@ -663,7 +702,49 @@ describe.skipIf(!ENABLED)(
       );
     });
 
-    it("11.2：vm の箱を起こしてから、Claude Code（偽物）を起動するまでの時間を測る（目標 10 秒以内）", () => {
+    it("5.3.1・5.2.7：本物の Claude Code（無効なトークン）でも、道具ゲート aicoop につながり、MCP の道具は mcp__aicoop__report_result だけが見える。Anthropic へは資格プロキシを通らない", () => {
+      const run = realClaude.runs[0];
+      const lines = readFileSync(paths.runLog(run?.id as string), "utf8")
+        .split("\n")
+        .filter((l) => l !== "");
+      console.log(
+        `[5.3.1] 本物の Claude Code の stream-json（先頭）：${lines
+          .slice(0, 6)
+          .map((l) => l.slice(0, 600))
+          .join(" / ")}`,
+      );
+      const init = lines
+        .map((l) => {
+          try {
+            return JSON.parse(l) as Record<string, unknown>;
+          } catch {
+            return null;
+          }
+        })
+        .find((e) => e?.type === "system" && e.subtype === "init");
+      expect(init).toBeDefined();
+      expect(run?.session_id).toBe(init?.session_id);
+      expect(init?.cwd).toBe("/work");
+      expect(init?.mcp_servers).toEqual([{ name: "aicoop", status: "connected" }]);
+      const mcpTools = (init?.tools as string[]).filter((t) => t.startsWith("mcp__"));
+      expect(mcpTools).toEqual(["mcp__aicoop__report_result"]);
+      // ログインできずに終わるので、報告はない
+      expect(realClaude.task.status).toBe("failed");
+      expect(realClaude.task.result_summary).toBeNull();
+      // 5.2.7：Anthropic 宛ては素通しで、資格プロキシの判定に来ない。ほかに向かった宛先を記録する（V-1 の3）
+      const decisions = audit.filter((r) => r.kind === "proxy.decision" && r.subject === run?.id);
+      expect(decisions.filter((r) => String(r.data.host).endsWith("anthropic.com"))).toEqual([]);
+      console.log(
+        `[V-1] 本物の Claude Code が資格プロキシに送った宛先：${
+          decisions.map((r) => `${r.data.decision} ${r.data.host}${r.data.path}`).join(", ") ||
+          "なし"
+        }`,
+      );
+      expect(recorded.boxes[4]?.destroyed).toBe(1);
+      expect(qemuAfter[run?.id as string]).toEqual([]);
+    });
+
+    it("11.2：vm の箱を起こし始めてから、claude を起動するまでの時間を測る（目標 10 秒以内）", () => {
       const times = recorded.boxes.map((b) => ({
         boot: (b.startedAt ?? Number.NaN) - b.createdAt,
         toExec: (b.execAt ?? Number.NaN) - b.createdAt,
