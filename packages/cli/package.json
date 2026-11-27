@@ -15,7 +15,9 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@aicoop/box-gondolin": "workspace:*",
     "@aicoop/daemon": "workspace:*",
-    "@aicoop/shared": "workspace:*"
+    "@aicoop/shared": "workspace:*",
+    "yaml": "^2.9.1"
   }
 }

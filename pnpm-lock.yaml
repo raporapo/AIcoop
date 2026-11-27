@@ -32,12 +32,18 @@ importers:
 
   packages/cli:
     dependencies:
+      '@aicoop/box-gondolin':
+        specifier: workspace:*
+        version: link:../box-gondolin
       '@aicoop/daemon':
         specifier: workspace:*
         version: link:../daemon
       '@aicoop/shared':
         specifier: workspace:*
         version: link:../shared
+      yaml:
+        specifier: ^2.9.1
+        version: 2.9.1
 
   packages/daemon:
     dependencies:
