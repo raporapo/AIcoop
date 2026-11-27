@@ -339,6 +339,17 @@ describe("5.1.4・5.2.7・5.3.1：通信", () => {
       driver.create(spec({ network: { ...spec().network, gatewayPort } })),
     ).rejects.toThrow();
   });
+
+  it("資格を使う宛先（secrets の hosts）は素通しにしない（判定を通らずに外へ出てしまう）", async () => {
+    const { driver } = setup();
+    await expect(
+      driver.create(
+        spec({
+          network: { ...spec().network, passthroughHosts: ["api.anthropic.com", "github.com"] },
+        }),
+      ),
+    ).rejects.toThrow(/素通し/);
+  });
 });
 
 describe("4.4：Box.exec", () => {

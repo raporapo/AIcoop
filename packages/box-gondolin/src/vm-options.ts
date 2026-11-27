@@ -1,7 +1,7 @@
 import { statSync } from "node:fs";
 import { isIP } from "node:net";
 import { isAbsolute } from "node:path";
-import type { BoxSpec, Mount, NetworkPolicy } from "@aicoop/shared";
+import type { BoxSpec, Mount } from "@aicoop/shared";
 import {
   type HttpFetch,
   type HttpHooks,
@@ -62,7 +62,7 @@ export function toVmOptions(input: VmOptionsInput): VMOptions {
     httpHooks: input.httpHooks,
     // tcp.hosts には、ホストごとの合成DNSが要る（Gondolin の qemu/tcp.js）
     dns: { mode: "synthetic", syntheticHostMapping: "per-host" },
-    tcp: { hosts: toTcpHosts(spec.network) },
+    tcp: { hosts: toTcpHosts(spec) },
     // WebSocket に切り替えたあとの中身は判定できないので、使わせない（P-3）
     allowWebSockets: false,
     vfs: { mounts: toMounts(spec.mounts) },
@@ -99,17 +99,23 @@ export function assertEnvEntry(name: string, value: unknown): void {
   }
 }
 
-function toTcpHosts(network: NetworkPolicy): Record<string, string> {
+function toTcpHosts(spec: Pick<BoxSpec, "network" | "secrets">): Record<string, string> {
+  const { network } = spec;
   const port = network.gatewayPort;
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     throw new Error(`gatewayPort が不正です：${String(port)}`);
   }
+  // 資格を使う宛先を素通しにすると、資格プロキシの判定を通らずに外へ出てしまう（P-3）
+  const secretHosts = new Set(spec.secrets.flatMap((s) => s.hosts.map((h) => h.toLowerCase())));
   const hosts: Record<string, string> = {
     // V-2：道具ゲート（5.3.1 の2）
     [`${GATEWAY_HOST}:80`]: `127.0.0.1:${port}`,
   };
   for (const host of network.passthroughHosts) {
     assertPassthroughHost(host);
+    if (secretHosts.has(host)) {
+      throw new Error(`資格を使う宛先は素通しにできません：${host}`);
+    }
     // V-1：Anthropic 宛ては、暗号を解かずにそのまま流す（5.2.7 の1）
     hosts[`${host}:443`] = `${host}:443`;
   }

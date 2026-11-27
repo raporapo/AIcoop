@@ -67,6 +67,17 @@ function vmRssKiB(vm: VM | null): number | null {
   }
 }
 
+/** ホストから見た VM のプロセスのコマンドライン（KVM を使っているかの確かめ） */
+function vmCommandLine(vm: VM | null): string {
+  const pid = vm?.getHostPid();
+  if (pid === null || pid === undefined) return "不明";
+  try {
+    return readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0").join(" ");
+  } catch {
+    return "不明";
+  }
+}
+
 const deny = (reason: string): ProxyDecision => ({
   action: "respond",
   status: 403,
@@ -435,6 +446,16 @@ for target in [('${ip}', ${tcpPort}), ('192.168.127.1', ${tcpPort})]:
       console.log(
         `[V-4] ホストから見た VM（QEMU）の VmRSS: ${vmRssKiB(vm) ?? "不明"} kB（起動して数コマンドのあと）`,
       );
+      console.log(
+        `[V-4] VM のプロセス: ${vmCommandLine(vm)
+          .split(" ")
+          .filter(
+            (arg, i, all) =>
+              /^-(m|smp|accel|cpu|machine)$/.test(all[i - 1] ?? "") ||
+              /^-(m|smp|accel|cpu|machine)$/.test(arg),
+          )
+          .join(" ")}`,
+      );
     },
     T,
   );
@@ -531,6 +552,8 @@ describe.skipIf(!IMAGE_ENABLED)("5.1.8・V-9：aicoop のベースイメージ�
   let imageDir = "";
   let vm: VM | null = null;
   let box: Box | null = null;
+  /** 資格プロキシで拒否したリクエスト（Claude Code が素通し以外にどこへ行こうとしたか。V-1 の3） */
+  const denied: string[] = [];
   const boxOf = (): Box => {
     if (!box) throw new Error("箱がない");
     return box;
@@ -566,7 +589,10 @@ describe.skipIf(!IMAGE_ENABLED)("5.1.8・V-9：aicoop のベースイメージ�
       network: {
         passthroughHosts: ["api.anthropic.com"],
         gatewayPort: 9,
-        onRequest: async () => deny("not_allowed"),
+        onRequest: async (req) => {
+          denied.push(`${req.method} ${req.protocol}://${req.host}:${req.port}${req.path}`);
+          return deny("not_allowed");
+        },
       },
     });
   }, 3_600_000);
@@ -594,6 +620,50 @@ describe.skipIf(!IMAGE_ENABLED)("5.1.8・V-9：aicoop のベースイメージ�
       console.log(
         `[V-4] VM の VmRSS: claude --version の前 ${before ?? "不明"} kB、あと ${vmRssKiB(vm) ?? "不明"} kB`,
       );
+    },
+    T,
+  );
+
+  it(
+    "V-1 の3：Claude Code（-p）を無効なトークンで動かし、素通し以外に向かった宛先を記録する",
+    async () => {
+      const before = denied.length;
+      const started = Date.now();
+      const handle = boxOf().exec(
+        [
+          "timeout",
+          "90",
+          "claude",
+          "-p",
+          "hello",
+          "--output-format",
+          "stream-json",
+          "--verbose",
+          "--max-turns",
+          "1",
+        ],
+        {
+          cwd: "/work",
+          env: {
+            HOME: "/root",
+            // 無効なトークン（Anthropic に届けば認証エラーになる）
+            CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-aicoop-ci-invalid-token",
+            CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+          },
+        },
+      );
+      const lines: ExecLine[] = [];
+      for await (const line of handle) lines.push(line);
+      const code = await handle.exitCode;
+      const head = lines
+        .slice(0, 8)
+        .map((l) => `${l.stream}: ${l.line.slice(0, 300)}`)
+        .join(" / ");
+      console.log(`[V-1] claude -p（無効なトークン）: exit=${code}、${Date.now() - started} ms`);
+      console.log(`[V-1] 出力の先頭: ${head}`);
+      console.log(`[V-1] 資格プロキシで拒否した宛先: ${denied.slice(before).join(", ") || "なし"}`);
+      console.log(`[V-4] VM の VmRSS: claude -p のあと ${vmRssKiB(vm) ?? "不明"} kB`);
+      expect(lines.length).toBeGreaterThan(0);
     },
     T,
   );
