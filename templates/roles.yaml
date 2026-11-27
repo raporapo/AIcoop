@@ -1,0 +1,74 @@
+# =============================================================================
+# roles.yaml：役職（設計書 6.4）
+# =============================================================================
+#
+# 役職は「やり方」と「許したいこと」の単位です。同じ役職を、いくつかの部署の社員が使ってもかまいません。
+#
+# - allow：この役職に許したい操作（書き方は groups.yaml の先頭の説明を見てください）。
+#   実際に許されるのは、allow と、社員の所属部署の ceiling の両方にある操作だけです。
+#     ・params（値の制限）は、両方の制限を満たす値だけ
+#     ・mode は厳しい方（hold は allow より厳しい）
+#   部署の ceiling にない操作を書くと、効かないことを aicoop check が警告します（W-001）。
+# - 役職のやり方（仕事の進め方）は prompts/roles/<役職ID>.md に書きます。
+#   社員が使っている役職は、このファイルが必須です。
+# - model：Claude Code の --model に渡す値（sonnet、opus など）。書かなければ sonnet
+# - max_turns：1回の仕事で Claude Code が考えて動く回数の上限（1〜500）。書かなければ 100
+# - tools・skills：[P3] 上流MCPの道具とスキル。report_result などの組み込みの道具は、自動で付きます。
+# - 役職ID は英小文字・数字・ハイフンで1〜40文字。manager（部長）と ceo（CEO）は特別な意味を持ちます。
+
+roles:
+  implementer:
+    name: "実装担当"
+    model: "sonnet"
+    # 実装は手数がかかるので、多めにしておく
+    max_turns: 150
+    allow:
+      - { op: "github.repo.read" }
+      - { op: "github.git.push" }
+      - { op: "github.pr.create" }
+      # ▼ [P2] Issue・PR へのコメント（groups.yaml の開発部の ceiling で hold にしてから）
+      # - { op: "github.issue.comment" }
+      # ▲
+
+  reviewer:
+    name: "レビュー担当"
+    allow:
+      # レビュー担当は読むだけ。結果は report_result で報告する
+      - { op: "github.repo.read" }
+      # ▼ [P2] レビューの結果を PR にコメントする（部署の ceiling が hold なので、承認を待つ）
+      # - { op: "github.issue.comment" }
+      # ▲
+
+  researcher:
+    name: "調査担当"
+    allow:
+      - { op: "web.read" }
+
+  # ▼ [P2] メール作成担当（groups.yaml の営業部の gmail、members.yaml の sales-mailer と一緒に）
+  # mail-writer:
+  #   name: "メール作成担当"
+  #   allow:
+  #     - { op: "gmail.message.read" }
+  #     - { op: "gmail.draft.create" }
+  #     - { op: "gmail.draft.update" }
+  #     # 部署の ceiling が hold なので、送信はオーナーの承認を待つ
+  #     - { op: "gmail.message.send" }
+  # ▲
+
+  # ▼ [P4] 部長・画像担当・CEO（groups.yaml・members.yaml の同じ印の部分と一緒に）
+  # manager:
+  #   # 部長は、担当する部署の保留・一時権限の申請・依頼票をレビューする。サービスは直接使わない
+  #   name: "部長"
+  #   allow: []
+  #
+  # image:
+  #   # 画像を作るには、host_tools.yaml に comfyui を登録してから tools: ["generate_image"] にする
+  #   name: "画像担当"
+  #   allow: []
+  #   tools: []
+  #
+  # ceo:
+  #   name: "CEO"
+  #   model: "opus"
+  #   allow: []
+  # ▲

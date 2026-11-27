@@ -5,6 +5,7 @@
  */
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
+import { configErrorMap, zodIssuesToConfigIssues } from "./config/messages.ts";
 import type { ConfigIssue, ParseResult } from "./config-issue.ts";
 import { compilePathPattern, type PathPattern, PathPatternError } from "./path-pattern.ts";
 
@@ -114,19 +115,12 @@ export function parseServiceDefinition(
   input: unknown,
   source?: string,
 ): ParseResult<ServiceDefinition> {
-  const result = serviceDefinitionSchema.safeParse(input);
+  // メッセージは日本語にする（11.7）
+  const result = serviceDefinitionSchema.safeParse(input, { error: configErrorMap });
   if (result.success) return { ok: true, value: result.data };
   return {
     ok: false,
-    issues: result.error.issues.map((issue) => {
-      const path = issue.path.map(String).join(".");
-      return {
-        code: "E-013",
-        message: path ? `${path}: ${issue.message}` : issue.message,
-        ...(source !== undefined && { source }),
-        ...(path && { path }),
-      } satisfies ConfigIssue;
-    }),
+    issues: zodIssuesToConfigIssues(result.error, source, serviceDefinitionSchema, input),
   };
 }
 

@@ -1,0 +1,128 @@
+# =============================================================================
+# groups.yaml：部署（設計書 6.3）
+# =============================================================================
+#
+# 部署は「箱」と「できることの上限」の単位です。
+#
+# - 同じ部署の社員は、同じ箱を1人ずつ順番に使い、同じ作業フォルダ（箱の中の /work）を見ます。
+#   箱は仕事のたびに作って壊し、作業フォルダ（~/.aicoop/data/groups/<部署ID>/work/）だけが残ります。
+#   ほかの部署の作業フォルダは見えません。
+# - ceiling（上限）に書いた操作だけが、その部署の社員に許されます。
+#   役職（roles.yaml）の allow に書いても、部署の ceiling になければ効きません。
+#   どちらにも書いていないことは、すべて禁止です。
+# - 部署ID（下の dev・sales）は、英小文字・数字・ハイフンで1〜40文字です。
+#   あとから変えると、作業フォルダと会話の続きが引き継がれないので、最初に決めてください。
+#
+# 許可項目の書き方（ceiling と、roles.yaml の allow で同じ）
+#   - { op: "web.read" }                                         その操作を許す
+#   - { op: "github.git.push", params: { repo: ["your-org/*"] } } 値を絞る（* は「何でも」）
+#   - { op: "github.pr.merge", mode: hold }                      重い操作。オーナーの承認を待つ [P2]
+#
+# 使える操作（組み込みのサービス。足すときは services/<名前>.yaml に定義を書く）
+#   github.repo.read       リポジトリを読む（clone・fetch・API の GET）
+#   github.git.push        push する（mode: hold は付けられません）
+#   github.pr.create       PR を作る
+#   github.issue.comment   Issue・PR にコメントする（外へ文章を出す）
+#   github.pr.merge        PR をマージする
+#   gmail.message.read     メールを読む
+#   gmail.draft.create     メールの下書きを作る
+#   gmail.draft.update     メールの下書きを直す
+#   gmail.message.send     メールを送る
+#   web.read               Webページを読む（GET・HEAD。GitHub と Gmail の宛先は含みません）
+#
+# 持ち出しの危険（W-002 の警告）について
+#   社内のデータを読める社員（github.repo.read、gmail.message.read）と、外へ自由に送れる操作
+#   （web.read、github.issue.comment など）が同じ部署にそろうと、作業フォルダの社内データを
+#   外へ送れてしまいます。aicoop check はこれを警告します。この雛形は、警告が出ない組み合わせに
+#   してあります。送る操作は mode: hold にするか、読む社員と送る社員を別の部署に分けてください。
+
+groups:
+  dev:
+    name: "開発部"
+
+    # 箱の種類。vm は microVM（ホストとカーネルが別）で、いちばん強く閉じ込めます。
+    # 外の文章を読む部署・資格を使う部署は、必ず vm にしてください。
+    box: vm
+
+    # 箱のメモリ（MiB。512〜16384）と CPU の数（1〜8）。ビルドやテストをする部署は多めに。
+    memory_mib: 3072
+    cpus: 2
+
+    # 箱のイメージに足す Alpine Linux のパッケージ。
+    # 変えたら aicoop image build --group dev でイメージを作り直してください。
+    packages: ["nodejs", "npm"]
+
+    # [P4] ほかの部署からの依頼票を受ける社員（この部署の社員から選ぶ）
+    intake_member: "dev-implementer"
+    # [P4] 依頼票を出してよい部署
+    can_request: []
+
+    ceiling:
+      # 「your-org」を、自分の GitHub のユーザー名か組織名に書き換えてください。
+      # 書き換えるまでは、どのリポジトリにも届きません（安全な側に倒れます）。
+      # 1つのリポジトリだけにするなら "your-org/app" のように書きます。
+      - { op: "github.repo.read", params: { repo: ["your-org/*"] } }
+      - { op: "github.git.push", params: { repo: ["your-org/*"] } }
+      - { op: "github.pr.create", params: { repo: ["your-org/*"] } }
+
+      # ▼ [P2] 承認アプリができたら、重い操作として足す
+      # # Issue・PR へのコメントは外へ文章を出すので、hold にする（allow にすると W-002 の警告が出ます）
+      # - { op: "github.issue.comment", params: { repo: ["your-org/*"] }, mode: hold }
+      # # main への取り込みは、オーナーが承認してから
+      # - { op: "github.pr.merge", params: { repo: ["your-org/*"] }, mode: hold }
+      # ▲
+
+      # web.read（Webページを読む）は、あえて入れていません。
+      # 開発部はリポジトリ（社内のデータ）を読めるので、Web へ自由に GET できると、
+      # URL にコードを載せて外へ送れてしまうからです（W-002 の警告が出ます）。
+      # そのため、いまは npm install のような、Web からのダウンロードもできません。
+      # 必要なら、次のどちらかにしてください。
+      #   - 読む先を決めたサービスの定義を services/ に足し、その操作だけを許す（おすすめ）
+      #   - { op: "web.read" } をここと roles.yaml の implementer に足し、W-002 の警告を受け入れる
+
+  sales:
+    name: "営業部"
+    box: vm
+    memory_mib: 1536
+    intake_member: "sales-researcher"
+    can_request: []
+
+    ceiling:
+      # Webページを読む（調べもの）。営業部には社内のデータを読む操作がないので、
+      # 持ち出しの危険（W-002）はありません。
+      - { op: "web.read" }
+
+      # ▼ [P2] メール作成担当を置くとき（roles.yaml の mail-writer、members.yaml の sales-mailer と一緒に）
+      # # 送信は必ず hold（オーナーが承認してから送る）にする。
+      # # 注意：メールを読める社員（reads_internal）と、Web を読める調査担当（sends_external）が
+      # # 同じ部署になるので、W-002 の警告が出ます。避けるなら、メール作成担当を別の部署にしてください。
+      # - { op: "gmail.message.read" }
+      # - { op: "gmail.draft.create" }
+      # - { op: "gmail.draft.update" }
+      # - { op: "gmail.message.send", mode: hold }
+      # ▲
+
+  # ▼ [P4] 役員室・デザイン部・CEO（members.yaml・roles.yaml の同じ印の部分と一緒に）
+  # executives:
+  #   # 部長AIが動く部署。部員が乗っ取られても部長のレビューを書き換えられないよう、別の箱で動かす。
+  #   # 必ず box: vm。部長はサービスを直接使わないので、ceiling は空のまま。
+  #   name: "役員室"
+  #   box: vm
+  #   memory_mib: 1024
+  #   ceiling: []
+  #
+  # design:
+  #   # srt は軽い箱（カーネルはホストと共有）。通信が資格プロキシを通らないので、
+  #   # サービスの操作を許された社員は置けず、ceiling も空にする。外とは道具ゲートを通してだけ話す。
+  #   name: "デザイン部"
+  #   box: srt
+  #   intake_member: "design-image"
+  #   ceiling: []
+  #
+  # ceo:
+  #   # CEO は箱の外（ホスト）で動く。使える道具は、仕事を振る・状態を見る などの道具ゲートのものだけ。
+  #   # 部署ID は ceo、box は none のまま。ceiling は空のまま。
+  #   name: "CEO"
+  #   box: none
+  #   ceiling: []
+  # ▲

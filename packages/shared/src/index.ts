@@ -28,6 +28,7 @@ export type {
   ProxyDecision,
 } from "./box.ts";
 export { canonicalJson } from "./canonical-json.ts";
+export * from "./config/index.ts";
 export { type ConfigIssue, isError, type ParseResult } from "./config-issue.ts";
 export {
   AICOOP_DECISION_HEADER,

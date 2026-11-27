@@ -1,0 +1,54 @@
+# =============================================================================
+# triggers.yaml：仕事を始めるきっかけ（設計書 6.6）
+# =============================================================================
+#
+# AI社員は、きっかけが来たときだけ動きます（ずっと動いているわけではありません）。
+#
+# - type: cron は、決まった時刻に仕事を始めます。
+#   schedule は「分 時 日 月 曜日」の5項目です（時刻は aicoop.yaml の timezone）。
+#     "0 8 * * 1-5"   平日の 8:00
+#     "30 9 * * *"    毎日 9:30
+#     "0 */2 * * *"   2時間ごと（0:00、2:00、…）
+#     "0 9 1 * *"     毎月1日の 9:00
+# - 手で始めるときは、ここには書かず aicoop run を使います（members.yaml の説明を見てください）。
+# - task.purpose（目的）と task.done_when（完了の条件）は必須です。
+#   「何ができたら終わりか」を、確かめられる形で具体的に書くほど、仕事の質が上がります。
+#   task.context（背景）には、知っておいてほしいことや、使うファイルの場所（/work/...）を書きます。
+# - enabled: false で止めておけます。
+# - timeout_minutes：このトリガーだけの時間制限（1〜55分）。書かなければ aicoop.yaml の task.timeout_minutes
+# - thread：[P2] 会話を続けるスレッドの名前。同じ名前なら、前回の会話の続きから始まります。
+#   書かなければ、毎回新しい会話です。
+# - id は、英小文字・数字・ハイフンで1〜40文字。トリガーごとに別の id にします。
+
+triggers:
+  # 平日の朝に、営業部の調査AIが、業界のニュースを調べてまとめる例です。
+  # context の（ここに書く）を自分の会社に合わせて直し、enabled: true にすると動き始めます。
+  - id: "sales-morning-news"
+    type: cron
+    enabled: false
+    schedule: "0 8 * * 1-5"
+    member: "sales-researcher"
+    timeout_minutes: 30
+    task:
+      purpose: "自社の業界について、前日から今朝までのニュースを調べ、要点をまとめる"
+      context: |
+        自社の業界：（ここに書く。例：国内の中小企業向けの会計ソフト）
+        気にしている会社：（ここに書く。例：競合のA社、B社）
+        前回までのまとめは /work/research/news/ にある。前回と同じニュースは省く。
+      done_when: "/work/research/news/ に今日の日付の md があり、5件以内のニュースそれぞれに、要点・出典のURL・自社への影響が書かれている"
+
+  # ▼ [P3] GitHub の Issue に aicoop ラベルが付いたら、実装AIが実装して PR を出す例（中継が要ります）
+  # - id: "dev-issue"
+  #   type: github
+  #   events: ["issues.labeled"]
+  #   # your-org/your-repo を、自分のリポジトリに書き換える
+  #   filter: { repository: "your-org/your-repo", label: "aicoop" }
+  #   member: "dev-implementer"
+  #   # {{...}} はテンプレート。使える変数は、設計書 6.6 の表にあるものだけ
+  #   thread: "issue-{{issue.number}}"
+  #   task:
+  #     purpose: "Issue #{{issue.number}} を実装して PR を出す"
+  #     # Issue のタイトルと本文は外の人が書いた文章なので、自動で囲まれ、指示としては扱われない
+  #     context: "{{issue.title}}\n{{issue.body}}"
+  #     done_when: "PR が作成され、report_result で PR の URL を報告した"
+  # ▲

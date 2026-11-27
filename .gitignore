@@ -17,3 +17,6 @@ secrets.json
 
 # テストやローカル実行で作られる aicoop のホーム
 .aicoop/
+
+# Claude Code のサブエージェントが作るワークツリー
+.claude/worktrees/
