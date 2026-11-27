@@ -9,6 +9,7 @@
     "node": ">=24"
   },
   "scripts": {
+    "aicoop": "node packages/cli/bin/aicoop.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.json && pnpm -r --no-bail typecheck",
