@@ -1,0 +1,22 @@
+# 組み込みのサービス定義：Gmail（設計書 6.7）
+id: gmail
+hosts: [gmail.googleapis.com]
+secret: { env: GMAIL_ACCESS_TOKEN, kind: google_oauth, header: authorization }
+operations:
+  message.read:
+    match:
+      - { method: GET, path: "/gmail/v1/users/me/messages/**" }
+      - { method: GET, path: "/gmail/v1/users/me/threads/**" }
+    tags: [reads_external, reads_internal]
+  draft.create:
+    match: [{ method: POST, path: "/gmail/v1/users/me/drafts" }]
+    tags: []
+  draft.update:
+    match: [{ method: PUT, path: "/gmail/v1/users/me/drafts/*" }]
+    tags: []
+  message.send:
+    match:
+      - { method: POST, path: "/gmail/v1/users/me/messages/send" }
+      - { method: POST, path: "/gmail/v1/users/me/drafts/send" }
+    tags: [sends_external]
+    summary: gmail_message

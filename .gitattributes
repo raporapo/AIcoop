@@ -1,0 +1,4 @@
+# Windows で checkout しても改行を LF にそろえる（Biome の書式チェックと揃えるため）
+* text=auto eol=lf
+*.png binary
+*.jpg binary

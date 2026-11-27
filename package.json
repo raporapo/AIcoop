@@ -1,0 +1,25 @@
+{
+  "name": "aicoop-monorepo",
+  "private": true,
+  "description": "自分のPCの中で「AIの会社」を安全に動かすOSS",
+  "license": "Apache-2.0",
+  "type": "module",
+  "packageManager": "pnpm@11.14.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.json && pnpm -r --no-bail typecheck",
+    "lint": "biome check .",
+    "format": "biome check --write .",
+    "verify": "biome ci . && pnpm typecheck && vitest run"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.6.9",
+    "@types/node": "^24.19.4",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.2"
+  }
+}

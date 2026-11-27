@@ -1,0 +1,36 @@
+# 組み込みのサービス定義：GitHub（設計書 6.7）
+id: github
+hosts: [api.github.com, github.com]
+params:
+  repo: 2 # {repo} は2区切り（owner/name）
+secret: { env: GITHUB_TOKEN, kind: github_app, header: authorization }
+operations:
+  repo.read:
+    match:
+      - { method: [GET, HEAD], host: api.github.com, path: "/repos/{repo}/**" }
+      - { method: GET, host: github.com, path: "/{repo}.git/info/refs" }
+      - { method: POST, host: github.com, path: "/{repo}.git/git-upload-pack" }
+    tags: [reads_internal, reads_external]
+    github_permissions: { contents: read, issues: read, pull_requests: read, metadata: read }
+  git.push:
+    match:
+      - { method: GET, host: github.com, path: "/{repo}.git/info/refs" }
+      - { method: POST, host: github.com, path: "/{repo}.git/git-receive-pack" }
+    tags: []
+    github_permissions: { contents: write }
+  pr.create:
+    match:
+      - { method: POST, host: api.github.com, path: "/repos/{repo}/pulls" }
+    tags: []
+    github_permissions: { pull_requests: write }
+  issue.comment:
+    match:
+      - { method: POST, host: api.github.com, path: "/repos/{repo}/issues/*/comments" }
+    tags: [sends_external]
+    github_permissions: { issues: write }
+  pr.merge:
+    match:
+      - { method: PUT, host: api.github.com, path: "/repos/{repo}/pulls/*/merge" }
+    tags: []
+    summary: github_pr_merge
+    github_permissions: { contents: write, pull_requests: write }

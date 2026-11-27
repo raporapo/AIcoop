@@ -1,0 +1,13 @@
+AIcoop
+Copyright 2026 The AIcoop Authors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+------------------------------------------------------------------------
+依存するOSS（実行時に読み込むもの）
+------------------------------------------------------------------------
+
+- zod      MIT License   https://github.com/colinhacks/zod
+- yaml     ISC License   https://github.com/eemeli/yaml
+
+ComfyUI（GPL-3.0）と Ollama は同梱しない。HTTPで呼ぶだけにする（設計書 15.2）。

@@ -1,0 +1,8 @@
+# 組み込みのサービス定義：Web（設計書 6.7）
+id: web
+hosts: ["*"] # ほかのサービスの hosts に入っているホストは含まない
+secret: null
+operations:
+  read:
+    match: [{ method: [GET, HEAD], path: "/**" }]
+    tags: [reads_external, sends_external] # GETのURLにデータを載せて送れるので sends_external も付く
