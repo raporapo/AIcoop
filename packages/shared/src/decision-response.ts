@@ -18,13 +18,16 @@ export const HOLD_MESSAGE = "承認待ちです。結果は後で届きます。
  * - `no_operation`：どの操作にも一致しない（5.2.4 の1）
  * - `not_allowed`：有効な許可にない（5.2.4 の4）
  * - `too_large_to_hold`：保留にする本文が上限を超えた（5.2.6 の1）
+ * - `hold_failed`：保留の中身（drafts/send の下書き、マージする PR）を確かめられなかったので、
+ *   保留にしなかった（5.7.1 の2。P2 で足した。設計書への記録待ち）
  */
-export type DenyReason = "no_operation" | "not_allowed" | "too_large_to_hold";
+export type DenyReason = "no_operation" | "not_allowed" | "too_large_to_hold" | "hold_failed";
 
 const DENY_REASONS: ReadonlySet<string> = new Set<DenyReason>([
   "no_operation",
   "not_allowed",
   "too_large_to_hold",
+  "hold_failed",
 ]);
 
 /** `<service>.<operation>`（6.3 の許可項目の op と同じ形） */

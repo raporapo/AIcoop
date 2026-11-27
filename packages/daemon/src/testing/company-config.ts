@@ -8,7 +8,7 @@
  * - 営業部 sales（vm）：上限は web.read
  *   - sales-researcher（researcher：web.read）
  */
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { type CompanyConfig, loadConfig } from "@aicoop/shared";
 import { stringify } from "yaml";
@@ -22,6 +22,8 @@ export interface CompanyFiles {
   readonly groups?: Record<string, Yaml>;
   readonly roles?: Record<string, Yaml>;
   readonly members?: Record<string, Yaml>;
+  /** triggers.yaml の triggers（書かなければ triggers.yaml を置かない） */
+  readonly triggers?: Yaml[];
   /** prompts/ からの相対パス → 中身（会社と役職のものは足りなければ足す） */
   readonly prompts?: Record<string, string>;
   /** スキル名 → （スキルのフォルダからの相対パス → 中身） */
@@ -70,6 +72,73 @@ export const DEFAULT_MEMBERS: Record<string, Yaml> = {
   "sales-researcher": { name: "調査AI", group: "sales", role: "researcher" },
 };
 
+/**
+ * P2 の会社（S-1・S-4）：営業部・開発部と、それぞれの部長（役員室）。
+ * - 営業部 sales：メール作成AI sales-mailer（gmail の送信は ceiling が hold）。部長は mgr-sales
+ * - 開発部 dev：実装AI dev-implementer（push は myorg/app だけ。ceiling は myorg/*。pr.merge は hold）。部長は mgr-dev
+ * - 部長のいない部署 solo：solo-mailer（gmail の送信は hold）
+ */
+export const P2_FILES: CompanyFiles = {
+  groups: {
+    dev: {
+      name: "開発部",
+      box: "vm",
+      intake_member: "dev-implementer",
+      ceiling: [
+        { op: "github.repo.read", params: { repo: ["myorg/*"] } },
+        { op: "github.git.push", params: { repo: ["myorg/*"] } },
+        { op: "github.pr.create", params: { repo: ["myorg/*"] } },
+        { op: "github.pr.merge", params: { repo: ["myorg/*"] }, mode: "hold" },
+      ],
+    },
+    sales: {
+      name: "営業部",
+      box: "vm",
+      intake_member: "sales-mailer",
+      ceiling: [
+        { op: "gmail.message.read" },
+        { op: "gmail.draft.create" },
+        { op: "gmail.draft.update" },
+        { op: "gmail.message.send", mode: "hold" },
+      ],
+    },
+    solo: {
+      name: "部長のいない部署",
+      box: "vm",
+      ceiling: [{ op: "gmail.message.send", mode: "hold" }],
+    },
+    executives: { name: "役員室", box: "vm", ceiling: [] },
+  },
+  roles: {
+    implementer: {
+      name: "実装担当",
+      allow: [
+        { op: "github.repo.read" },
+        { op: "github.git.push", params: { repo: ["myorg/app"] } },
+        { op: "github.pr.create" },
+        { op: "github.pr.merge" },
+      ],
+    },
+    "mail-writer": {
+      name: "メール作成担当",
+      allow: [
+        { op: "gmail.message.read" },
+        { op: "gmail.draft.create" },
+        { op: "gmail.draft.update" },
+        { op: "gmail.message.send" },
+      ],
+    },
+    manager: { name: "部長", allow: [] },
+  },
+  members: {
+    "dev-implementer": { name: "実装AI", group: "dev", role: "implementer" },
+    "sales-mailer": { name: "メール作成AI", group: "sales", role: "mail-writer" },
+    "solo-mailer": { name: "ひとりのメール係", group: "solo", role: "mail-writer" },
+    "mgr-dev": { name: "開発部長AI", group: "executives", role: "manager", manages: "dev" },
+    "mgr-sales": { name: "営業部長AI", group: "executives", role: "manager", manages: "sales" },
+  },
+};
+
 function writeText(path: string, content: string): void {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, content);
@@ -85,6 +154,11 @@ export function writeCompanyFiles(home: string, files: CompanyFiles = {}): void 
   writeText(join(home, "groups.yaml"), stringify({ groups: files.groups ?? DEFAULT_GROUPS }));
   writeText(join(home, "roles.yaml"), stringify({ roles }));
   writeText(join(home, "members.yaml"), stringify({ members: files.members ?? DEFAULT_MEMBERS }));
+  if (files.triggers !== undefined) {
+    writeText(join(home, "triggers.yaml"), stringify({ triggers: files.triggers }));
+  } else {
+    rmSync(join(home, "triggers.yaml"), { force: true });
+  }
 
   const prompts: Record<string, string> = {
     "company.md": "会社の方針：丁寧に。\n",

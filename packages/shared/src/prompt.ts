@@ -313,6 +313,8 @@ export function buildToolsAndRules(input: ToolsAndRulesInput): string {
     no_operation:
       "宛先・メソッド・パスが、どの操作にも当たりません。上の一覧の形で送ってください。パスに `..`・`%2e`・`%2f` などを入れても通りません",
     too_large_to_hold: "承認待ちにするには、本文が大きすぎます",
+    hold_failed:
+      "承認待ちにするために中身（下書き・Pull Request など）を確かめようとしましたが、できませんでした。下書きの ID・PR の番号が正しいかを確かめてください",
   };
   lines.push(
     "",

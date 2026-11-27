@@ -23,6 +23,11 @@ export interface RunEnvironment {
   readonly fetch?: typeof fetch;
   /** 時刻の元。なければ `db.now` */
   readonly now?: () => Date;
+  /**
+   * 実行の中でタスクを作ったとき（部長のレビュー・on_hold_resolved。5.7.1 の2、5.2.6 の4）。
+   * daemon は順番待ちを見直す（なくても、数秒ごとの見直しで始まる）
+   */
+  readonly onTaskCreated?: () => void;
 }
 
 export interface RunRequest {

@@ -45,6 +45,16 @@ describe("5.2.5：拒否の応答", () => {
     });
   });
 
+  it("5.7.1 の2：保留の中身（下書き・PR）を確かめられないときは hold_failed で拒否する", () => {
+    const r = denyResponse("gmail.message.send", "hold_failed");
+    expect(r.status).toBe(403);
+    expect(JSON.parse(r.body)).toEqual({
+      aicoop: "deny",
+      operation: "gmail.message.send",
+      reason: "hold_failed",
+    });
+  });
+
   it("ルールの判定（5.2.4）の deny から作れる", () => {
     const catalog = createServiceCatalog(loadBuiltinServices());
     const effective = effectivePermissions({

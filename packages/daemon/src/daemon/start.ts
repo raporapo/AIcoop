@@ -34,9 +34,14 @@ import {
   createApiServer,
   listenApi,
 } from "../api/server.ts";
+import type { ApprovalTargets } from "../approvals/types.ts";
 import { appendAudit, pruneAuditLog } from "../db/audit.ts";
 import { openStateDb, type StateDb } from "../db/open.ts";
 import { recoverAfterRestart } from "../db/restart.ts";
+import type { HoldDeps } from "../holds/deps.ts";
+import { expireDue } from "../holds/expire.ts";
+import { recoverReplays } from "../holds/replay.ts";
+import { createHoldTargets } from "../holds/targets.ts";
 import { createDaemonLogger, type LineStream, pruneOldLogs } from "../log.ts";
 import { aicoopPaths } from "../paths.ts";
 import { removeStaleRuntimeDirs } from "../run/runtime-files.ts";
@@ -55,6 +60,8 @@ import {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const LOCK_FILE = "daemon.lock";
+/** 保留・一時権限の期限を見る間隔 */
+const HOLD_EXPIRY_INTERVAL_MS = 60 * 1000;
 
 export type DaemonStartErrorCode =
   /** 設定にエラーがある（issues に誤り） */
@@ -118,6 +125,11 @@ export interface DaemonHandle {
   stop(): Promise<void>;
   /** 止まったら解決する（stop・POST /shutdown・シグナルのどれでも） */
   readonly stopped: Promise<void>;
+  /**
+   * オーナーの承認の対象（P2：保留 hold・一時権限 grant。`holds/targets.ts`）。
+   * 承認の署名を確かめる側（approvals/）に渡す。startDaemon は必ず入れる（偽の daemon では無くてよい）
+   */
+  readonly approvalTargets?: ApprovalTargets;
 }
 
 function daemonVersion(): string {
@@ -195,8 +207,10 @@ export async function startDaemon(options: StartDaemonOptions): Promise<DaemonHa
   let scheduler: TaskScheduler;
   let triggers: TriggerSet;
   let maintenanceTimer: TimerHandle | undefined;
+  let holdTimer: TimerHandle | undefined;
   let info: DaemonInfo;
   let drivers: BoxDrivers;
+  let approvalTargets: ApprovalTargets;
 
   try {
     // 3. ログ・state.db
@@ -292,7 +306,21 @@ export async function startDaemon(options: StartDaemonOptions): Promise<DaemonHa
       logger,
       now,
       ...(options.fetch !== undefined && { fetch: options.fetch }),
+      // 実行の中で作ったタスク（部長のレビュー・on_hold_resolved）を、すぐ順番待ちに乗せる
+      onTaskCreated: () => scheduler.kick(),
     };
+    // 保留・一時権限（P2）：オーナーの承認の対象・再送・期限
+    const holdDeps: HoldDeps = {
+      db,
+      paths,
+      config: () => config,
+      fetch: options.fetch ?? globalThis.fetch,
+      now,
+      logger,
+      onTaskCreated: () => scheduler.kick(),
+      canRun: (cfg, memberId) => checkRunnableMember(cfg, memberId, drivers).ok,
+    };
+    approvalTargets = createHoldTargets(holdDeps);
     scheduler = createTaskScheduler({
       db,
       env,
@@ -339,6 +367,7 @@ export async function startDaemon(options: StartDaemonOptions): Promise<DaemonHa
             process.off("SIGTERM", signalHandler);
           }
           if (maintenanceTimer !== undefined) timers.clearTimeout(maintenanceTimer);
+          if (holdTimer !== undefined) timers.clearTimeout(holdTimer);
           triggers.stop();
           await scheduler.stop(
             options.stopTimeoutMs === undefined ? {} : { timeoutMs: options.stopTimeoutMs },
@@ -363,6 +392,7 @@ export async function startDaemon(options: StartDaemonOptions): Promise<DaemonHa
 
     const control: ApiControl = {
       db,
+      paths,
       logger,
       token,
       port: () => port,
@@ -479,6 +509,20 @@ export async function startDaemon(options: StartDaemonOptions): Promise<DaemonHa
     scheduler.start();
     scheduler.kick();
     scheduleMaintenance();
+    // 保留：送っている途中で落ちたものの後始末と、承認の直後に落ちたものの再送（5.2.6 の2）。
+    // 期限（5.2.6 の5・5.7.3 の3）は、いま1回と、そのあと1分ごとに見る
+    void recoverReplays(holdDeps).catch((error: unknown) =>
+      logger.error({ err: error }, "保留の再送の後始末に失敗しました"),
+    );
+    const checkHoldExpiry = () => {
+      try {
+        expireDue(holdDeps);
+      } catch (error) {
+        logger.error({ err: error }, "保留・一時権限の期限を確かめられませんでした");
+      }
+      holdTimer = timers.setTimeout(checkHoldExpiry, HOLD_EXPIRY_INTERVAL_MS);
+    };
+    checkHoldExpiry();
     if (options.handleSignals) {
       process.on("SIGINT", signalHandler);
       process.on("SIGTERM", signalHandler);
@@ -494,6 +538,7 @@ export async function startDaemon(options: StartDaemonOptions): Promise<DaemonHa
       token,
       stop,
       stopped,
+      approvalTargets,
     };
   } catch (error) {
     cleanup();

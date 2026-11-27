@@ -397,7 +397,7 @@ describe("5.4.3 の2：使える道具とルール", () => {
     expect(section).toContain('{"aicoop":"deny","operation":');
     expect(section).toContain('{"aicoop":"hold","hold_id":');
     expect(section).toContain(HOLD_MESSAGE);
-    for (const reason of ["not_allowed", "no_operation", "too_large_to_hold"]) {
+    for (const reason of ["not_allowed", "no_operation", "too_large_to_hold", "hold_failed"]) {
       expect(section).toContain(`\`${reason}\``);
     }
     expect(section).toContain("同じ操作を繰り返さない");

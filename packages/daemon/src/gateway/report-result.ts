@@ -94,7 +94,7 @@ export function validateReportResult(args: unknown, workDir: string): ReportVali
  * 文字の向きを変える文字（印 U+061C・U+200E・U+200F、埋め込み・上書き U+202A〜U+202E、
  * 分離 U+2066〜U+2069）を含むか。CLI の表示の無害化（packages/cli の ui/text.ts）と同じ範囲
  */
-function hasUnsafeChar(text: string): boolean {
+export function hasUnsafeChar(text: string): boolean {
   for (const ch of text) {
     const code = ch.codePointAt(0) ?? 0;
     if (code === 0x09 || code === 0x0a || code === 0x0d) continue;

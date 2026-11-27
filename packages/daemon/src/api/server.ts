@@ -32,9 +32,10 @@ import type { Logger } from "pino";
 import { listAuditLog } from "../db/audit.ts";
 import type { StateDb } from "../db/open.ts";
 import { listRunsForTask } from "../db/runs.ts";
-import { holds, tasks } from "../db/schema.ts";
+import { tasks } from "../db/schema.ts";
 import { cancelTask, createTask, getTask, InvalidTaskTransitionError } from "../db/tasks.ts";
 import { getUsageState, type UsageState } from "../db/usage.ts";
+import type { AicoopPaths } from "../paths.ts";
 import type { RunHandle } from "../run/types.ts";
 import type { RunnableCheck } from "../triggers/runnable.ts";
 import {
@@ -46,9 +47,7 @@ import {
   type CreateTaskRequest,
   type CreateTaskResponse,
   type GetTaskResponse,
-  type HoldView,
   type ListAuditResponse,
-  type ListHoldsResponse,
   type ListTasksResponse,
   type ReloadResponse,
   type RunningBoxView,
@@ -60,6 +59,7 @@ import {
   type UsageResponse,
   type UsageView,
 } from "./contract.ts";
+import { registerHoldRoutes } from "./routes/holds.ts";
 
 /** 本文の上限 */
 export const MAX_BODY_BYTES = 64 * 1024;
@@ -72,6 +72,8 @@ const MAX_TOKEN_CHARS = 512;
 /** API の向こう側（daemon の中身）。テストではなく daemon の本体が渡す */
 export interface ApiControl {
   readonly db: StateDb;
+  /** `~/.aicoop` の中の置き場所（保留したリクエストのファイルを読む） */
+  readonly paths: AicoopPaths;
   readonly logger: Logger;
   /** ローカルAPI のトークン */
   readonly token: string;
@@ -506,30 +508,8 @@ export function createApiApp(control: ApiControl): Hono {
     return c.json(body);
   });
 
-  api.get("/holds", (c) => {
-    const rows = db.orm
-      .select()
-      .from(holds)
-      .where(inArray(holds.status, ["pending_manager", "pending_owner"]))
-      .orderBy(desc(holds.createdAt), desc(holds.id))
-      .all();
-    const body: ListHoldsResponse = {
-      holds: rows.map(
-        (h): HoldView => ({
-          id: h.id,
-          task_id: h.taskId,
-          member_id: h.memberId,
-          group_id: h.groupId,
-          operation: h.operation,
-          status: h.status,
-          summary: parseJsonOrNull(h.summary),
-          created_at: h.createdAt,
-          expires_at: h.expiresAt,
-        }),
-      ),
-    };
-    return c.json(body);
-  });
+  // 保留・一時権限（P2。GET /holds・/holds/{id}・/grants）
+  registerHoldRoutes(api, { db, paths: control.paths });
 
   api.get("/usage", (c) => {
     const body: UsageResponse = { usage: usageView(getUsageState(db)) };
