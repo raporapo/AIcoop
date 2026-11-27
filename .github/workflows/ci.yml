@@ -61,6 +61,37 @@ jobs:
           AICOOP_VM_IT: "1"
         run: pnpm vitest run packages/box-gondolin/src/vm.integration.test.ts --reporter=verbose
 
+  # P1 の完了条件（14章）を、本物の vm の箱で端から端まで確かめる：雛形の会社・本物の制御サーバー（startDaemon）・
+  # 1件の実行（startRun）・Gondolin のドライバー。Claude Code の代わりに偽の claude（シェルスクリプト）を入れた
+  # イメージを組み立てて使う（packages/daemon/src/p1.vm.e2e.test.ts）
+  vm-e2e:
+    name: vm e2e (P1, Gondolin, KVM)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - name: KVM を使えるようにする
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+      - name: QEMU と mke2fs を入れる
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils e2fsprogs
+          qemu-system-x86_64 --version
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: P1 の完了条件の結合テスト
+        env:
+          AICOOP_VM_E2E: "1"
+        run: pnpm vitest run packages/daemon/src/p1.vm.e2e.test.ts --reporter=verbose
+
   # vm のベースイメージ（5.1.8）を組み立て、その箱で Claude Code が動くか確かめる（16章 V-9）
   vm-image:
     name: vm image (5.1.8, V-9)
