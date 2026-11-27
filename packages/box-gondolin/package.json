@@ -1,0 +1,18 @@
+{
+  "name": "@aicoop/box-gondolin",
+  "version": "0.0.0",
+  "private": true,
+  "description": "AIcoop の箱 vm（Gondolin の microVM）。shared の BoxDriver だけを実装する",
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@aicoop/shared": "workspace:*",
+    "@earendil-works/gondolin": "^0.14.0"
+  }
+}

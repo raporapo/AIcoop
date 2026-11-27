@@ -7,7 +7,16 @@ This product is licensed under the Apache License, Version 2.0 (see LICENSE).
 依存するOSS（実行時に読み込むもの）
 ------------------------------------------------------------------------
 
-- zod      MIT License   https://github.com/colinhacks/zod
-- yaml     ISC License   https://github.com/eemeli/yaml
+- zod                        MIT License         https://github.com/colinhacks/zod
+- yaml                       ISC License         https://github.com/eemeli/yaml
+- ulid                       MIT License         https://github.com/ulid/javascript
+- croner                     MIT License         https://github.com/hexagon/croner
+- @earendil-works/gondolin   Apache-2.0          https://github.com/earendil-works/gondolin
+- better-sqlite3             MIT License         https://github.com/WiseLibs/better-sqlite3
+- drizzle-orm                Apache-2.0          https://github.com/drizzle-team/drizzle-orm
+- hono                       MIT License         https://github.com/honojs/hono
+- @hono/node-server          MIT License         https://github.com/honojs/node-server
+- @modelcontextprotocol/sdk  MIT License         https://github.com/modelcontextprotocol/typescript-sdk
+- pino                       MIT License         https://github.com/pinojs/pino
 
 ComfyUI（GPL-3.0）と Ollama は同梱しない。HTTPで呼ぶだけにする（設計書 15.2）。

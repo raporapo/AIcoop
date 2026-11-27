@@ -1,2 +1,10 @@
 packages:
   - "packages/*"
+
+# インストールスクリプトを動かしてよい依存（それ以外は動かさない）
+allowBuilds:
+  # SQLite のネイティブモジュール（state.db。7章）
+  better-sqlite3: true
+  # ssh2 の任意の高速化。Gondolin の SSH 中継でしか使わず、無くても動く
+  cpu-features: false
+  ssh2: false
