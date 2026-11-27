@@ -1,3 +1,5 @@
+// ローカルHTTP API の形（9.2）
+export * from "./api/contract.ts";
 // state.db（7章）
 export {
   AuditChainBrokenError,
@@ -46,3 +48,17 @@ export {
   transitionTask,
 } from "./db/tasks.ts";
 export { getUsageState, setUsageState, type UsageState, usageGate } from "./db/usage.ts";
+// ~/.aicoop の中の置き場所（6.1）
+export { type AicoopPaths, aicoopPaths, resolveAicoopHome } from "./paths.ts";
+// 資格保管庫（5.2.8）
+export {
+  listSecrets,
+  readSecret,
+  removeSecret,
+  type SecretListEntry,
+  SecretStoreError,
+  type SecretValue,
+  type StoredSecret,
+  setSecret,
+  validateSecretValue,
+} from "./secrets/store.ts";
