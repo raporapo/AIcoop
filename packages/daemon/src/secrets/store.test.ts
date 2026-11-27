@@ -126,6 +126,26 @@ describe("5.2.8 の4：種類ごとの中身の形", () => {
     }
   });
 
+  it("11.5：資格をキーの位置に貼っても、キーの名前として画面に出さない（40文字の古い GitHub トークン）", () => {
+    const token = "0123456789abcdef0123456789abcdef01234567";
+    for (const value of [{ [token]: "x" }, { token: "x", [token]: "y" }]) {
+      try {
+        validateSecretValue("static_token", value);
+        expect.unreachable();
+      } catch (e) {
+        expect(e).toBeInstanceOf(SecretStoreError);
+        expect(String((e as Error).message)).not.toContain(token);
+        expect(String((e as Error).message)).not.toContain("0123456789");
+      }
+    }
+  });
+
+  it("知らないキーが要るキーと同じ形の名前なら、何が違うか分かるように案内する", () => {
+    expect(() => validateSecretValue("static_token", { token: "x", extra: 1 })).toThrow(
+      /知らないキーが1つあります/,
+    );
+  });
+
   it("資格の ID は英小文字・数字・ハイフン（先頭はハイフン不可、1〜40文字）", () => {
     for (const id of ["", "-x", "Github", "a_b", "a/b", "../x", "x".repeat(41)]) {
       expect(() => setSecret(file, id, "static_token", { token: "t" }, NOW)).toThrow(

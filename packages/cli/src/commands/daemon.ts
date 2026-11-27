@@ -2,7 +2,7 @@
  * `aicoop daemon`（9.1）：制御サーバーを前面で動かす。ログは標準出力に（`--background` なら logs/ に）。
  * Ctrl+C で止める（動いている実行を止めてから終わる）。もう一度 Ctrl+C で、待たずに終わる。
  *
- * 制御サーバーの本体は `daemon-entry.ts` の1か所から読み込む（E・D のマージ待ち）。
+ * 制御サーバーの本体は `daemon-entry.ts` の1か所から読み込む。
  */
 import { existsSync } from "node:fs";
 import { probeDaemon } from "../api/client.ts";

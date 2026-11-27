@@ -88,8 +88,9 @@ export function validateSecretValue(kind: SecretKind, value: unknown): SecretVal
   const record = value as Record<string, unknown>;
   const unknownKeys = Object.keys(record).filter((k) => !required.includes(k));
   if (unknownKeys.length > 0) {
+    // キーの名前も表示しない。資格そのものをキーの位置に貼ってしまうことがある（11.5）
     throw new SecretStoreError(
-      `知らないキーがあります: ${unknownKeys.map(safeKeyName).join(", ")}。${hint}`,
+      `知らないキーが${unknownKeys.length}つあります（名前は表示しません。資格を貼る場所を間違えているかもしれません）。使えるキーは ${required.join("・")} だけです。${hint}`,
     );
   }
   for (const key of required) {
@@ -110,11 +111,6 @@ export function validateSecretValue(kind: SecretKind, value: unknown): SecretVal
     }
   }
   return Object.fromEntries(required.map((k) => [k, record[k]])) as unknown as SecretValue;
-}
-
-/** キーの名前も外から来た値なので、長すぎるもの・変な文字は伏せる */
-function safeKeyName(key: string): string {
-  return /^[A-Za-z0-9_-]{1,40}$/.test(key) ? key : "（表示しないキー）";
 }
 
 function requireSecretId(id: string): void {

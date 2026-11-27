@@ -56,7 +56,10 @@ export function memberIds(home: string): string[] {
 }
 
 export function memberHints(home: string, id: string): string[] {
-  const close = suggest(id, memberIds(home));
+  const ids = memberIds(home);
+  // 設定にいる社員が別の理由（箱が動かせない・人間の社員など）で断られたときは、勧めるものがない
+  if (ids.includes(id)) return [];
+  const close = suggest(id, ids);
   return close.length > 0
     ? [`もしかして ${close.join("、")}`]
     : ["社員の一覧は members.yaml にあります"];

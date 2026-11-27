@@ -87,6 +87,21 @@ describe("aicoop run の拒否される側（API を呼ぶ前に止める。終�
     expect(r.stderr).toContain("もしかして dev-implementer");
   });
 
+  it("設定にいる社員が別の理由で断られたら、同じ名前を「もしかして」に出さない", async () => {
+    daemon.on("POST /tasks", {
+      status: 422,
+      body: {
+        error: "unknown_member",
+        message:
+          "社員「dev-implementer」の部署「dev」の箱（vm）は、この daemon ではまだ動かせません",
+      },
+    });
+    const r = await cli.run(["run", "dev-implementer", "--purpose", "p", "--done-when", "d"]);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("まだ動かせません");
+    expect(r.stderr).not.toContain("もしかして");
+  });
+
   it("daemon が動いていなければ aicoop start を案内する（終了コード 3）", async () => {
     await daemon.close();
     const r = await cli.run(base);

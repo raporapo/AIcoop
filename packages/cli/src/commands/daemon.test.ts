@@ -46,6 +46,7 @@ function fakeEntry(
         return {
           port: 7070,
           info,
+          token: "test-token",
           stopped,
           stop: async () => {
             result.stopCalls++;
@@ -151,13 +152,13 @@ describe("9.1 aicoop daemon：前面で動かし、Ctrl+C で止める", () => {
     }
   });
 
-  it("制御サーバーの本体がまだ入っていない版なら、そう言って 1", async () => {
-    const empty = createTestCli();
+  it("制御サーバーの本体を読み込めなければ、そう言って 1", async () => {
+    const empty = createTestCli({ deps: { loadDaemonEntry: async () => null } });
     try {
       await empty.run(["init"]);
       const r = await empty.run(["daemon"]);
       expect(r.code).toBe(1);
-      expect(r.stderr).toContain("まだ制御サーバーの本体が入っていません");
+      expect(r.stderr).toContain("制御サーバーの本体を読み込めませんでした");
     } finally {
       empty.cleanup();
     }
@@ -244,9 +245,10 @@ describe("9.1 aicoop start：裏で起動し、API が応答するまで待つ",
     }
   });
 
-  it("制御サーバーの本体がまだ入っていない版なら、起こさずにそう言う（1）", async () => {
+  it("制御サーバーの本体を読み込めなければ、起こさずにそう言う（1）", async () => {
     const missing = createTestCli({
       deps: {
+        loadDaemonEntry: async () => null,
         spawnDaemon: (home, logFile) => {
           spawnCalls.push({ home, logFile });
           return { pid: 1, exited: Promise.resolve(1) };
@@ -257,7 +259,7 @@ describe("9.1 aicoop start：裏で起動し、API が応答するまで待つ",
       await missing.run(["init"]);
       const r = await missing.run(["start"]);
       expect(r.code).toBe(1);
-      expect(r.stderr).toContain("まだ制御サーバーの本体が入っていません");
+      expect(r.stderr).toContain("制御サーバーの本体を読み込めませんでした");
       expect(spawnCalls).toHaveLength(0);
     } finally {
       missing.cleanup();
