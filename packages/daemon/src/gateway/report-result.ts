@@ -1,7 +1,8 @@
 /**
  * 組み込み道具 `report_result`（5.3.3）の入力の検証。
  *
- * - `summary`：必須の文字列。空白だけは不可。最大4000文字
+ * - `summary`：必須の文字列。空白だけは不可。最大4000文字。端末を操る制御文字（タブ・改行以外）と
+ *   向きを変える文字は不可（オーナーの CLI・承認アプリにそのまま出るので、画面を偽れないように）
  * - `files`：任意の文字列の配列、最大50個。作業ディレクトリ以下のパス
  *   - 箱の中のパス `/work/...` と、作業ディレクトリからの相対パスを受け付ける
  *   - `..` を含むもの、`/work` の外の絶対パス、存在しないもの、リンク（とリンクを通るもの）は不可
@@ -67,6 +68,11 @@ export function validateReportResult(args: unknown, workDir: string): ReportVali
   if ([...summary].length > MAX_SUMMARY_CHARS) {
     return fail(`summary は${MAX_SUMMARY_CHARS}文字までです`);
   }
+  if (hasUnsafeChar(summary)) {
+    return fail(
+      "summary に制御文字（ESC など）や文字の向きを変える文字は使えません。ふつうの文章で書いてください",
+    );
+  }
 
   const rawFiles = record.files ?? [];
   if (!Array.isArray(rawFiles) || !rawFiles.every((f) => typeof f === "string")) {
@@ -81,6 +87,22 @@ export function validateReportResult(args: unknown, workDir: string): ReportVali
     if (!files.includes(checked)) files.push(checked);
   }
   return { ok: true, value: { summary, files } };
+}
+
+/**
+ * 端末を操る制御文字（タブ・改行・復帰以外の Cc。ESC・C1 の CSI など）と、
+ * 文字の向きを変える文字（印 U+061C・U+200E・U+200F、埋め込み・上書き U+202A〜U+202E、
+ * 分離 U+2066〜U+2069）を含むか。CLI の表示の無害化（packages/cli の ui/text.ts）と同じ範囲
+ */
+function hasUnsafeChar(text: string): boolean {
+  for (const ch of text) {
+    const code = ch.codePointAt(0) ?? 0;
+    if (code === 0x09 || code === 0x0a || code === 0x0d) continue;
+    if (/\p{Cc}/u.test(ch)) return true;
+    if (code === 0x061c || code === 0x200e || code === 0x200f) return true;
+    if ((code >= 0x202a && code <= 0x202e) || (code >= 0x2066 && code <= 0x2069)) return true;
+  }
+  return false;
 }
 
 /** 1つのパスを確かめ、作業フォルダからの相対パスにする */

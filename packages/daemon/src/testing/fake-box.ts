@@ -7,6 +7,7 @@
  * - 偽の Claude Code は、次のことができる（FakeClaudeContext）
  *   - stream-json の行を出す（`emit`。オブジェクトは JSON にする）
  *   - 道具ゲート `http://127.0.0.1:<gatewayPort>/mcp` に MCP クライアントでつなぎ、道具を呼ぶ
+ *     （本物の Claude Code と同じく、`/etc/aicoop/mcp.json` の `headers` のトークンを付ける）
  *   - `spec.network.onRequest` に偽のリクエストを渡して、資格プロキシの判定を確かめる
  *   - 時間がかかる（`sleep`。止められたら早く終わる）、終了コードを返す
  * - `kill`・`destroy` の回数を記録する。止められた exec は終了コード 137 で終わる
@@ -23,6 +24,7 @@
  * ```
  */
 
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type {
   Box,
@@ -229,6 +231,7 @@ export class FakeBox implements Box {
       await client.connect(
         new StreamableHTTPClientTransport(
           new URL(`http://127.0.0.1:${spec.network.gatewayPort}/mcp`),
+          { requestInit: { headers: gatewayHeaders(box) } },
         ),
       );
       return client;
@@ -308,6 +311,21 @@ export class FakeBox implements Box {
         });
       },
     };
+  }
+}
+
+/**
+ * 本物の Claude Code と同じく、箱の中の `/etc/aicoop/mcp.json` の `headers`（道具ゲートのトークン）を
+ * 読んで使う。mcp.json がなければヘッダーなし（ゲートは 401 を返す）
+ */
+function gatewayHeaders(box: FakeBox): Record<string, string> {
+  try {
+    const config = JSON.parse(readFileSync(box.hostPath("/etc/aicoop/mcp.json"), "utf8")) as {
+      mcpServers?: { aicoop?: { headers?: Record<string, string> } };
+    };
+    return { ...(config.mcpServers?.aicoop?.headers ?? {}) };
+  } catch {
+    return {};
   }
 }
 

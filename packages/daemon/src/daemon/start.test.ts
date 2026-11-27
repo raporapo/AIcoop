@@ -196,6 +196,20 @@ describe("aicoop daemon の起動（startDaemon）", () => {
     expect(fake.runs.map((r) => r.taskId)).toEqual([starting.id]);
   });
 
+  it("8.6・6.1：前の制御サーバーが落ちて残った runtime/<run_id>/（mcp.json のゲートのトークンなど）を消す", async () => {
+    const existing = newCompany();
+    const paths = aicoopPaths(existing.company.home);
+    const { mkdirSync } = await import("node:fs");
+    const { newId } = await import("@aicoop/shared");
+    const stale = newId("run");
+    mkdirSync(paths.runEtc(stale), { recursive: true });
+    writeFileSync(join(paths.runEtc(stale), "mcp.json"), "{}");
+
+    const t = await startTestDaemon({ existing, fake: fakeStartRun() });
+    cleanups.push(() => t.daemon.stop());
+    expect(existsSync(paths.runDir(stale))).toBe(false);
+  });
+
   it("5.10：起動時に監査ログ config.load（読み込んだ設定ファイルごとの SHA-256）を書く", async () => {
     const t = await started();
     const entries = (await t.api({ path: "/audit" })).json.entries as Array<{

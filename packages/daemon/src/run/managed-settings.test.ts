@@ -47,9 +47,15 @@ describe("5.3.8：vm の箱の Claude Code の管理設定（V-8）", () => {
 });
 
 describe("5.3.1 の5：--mcp-config に渡す MCP の設定は、道具ゲート1つだけ", () => {
-  it("aicoop という名前の Streamable HTTP のサーバー1つ", () => {
-    expect(mcpConfig()).toEqual({
-      mcpServers: { aicoop: { type: "http", url: "http://aicoop.internal/mcp" } },
+  it("aicoop という名前の Streamable HTTP のサーバー1つ。その実行のゲートのトークンを Authorization ヘッダーで渡す", () => {
+    expect(mcpConfig("tok-123")).toEqual({
+      mcpServers: {
+        aicoop: {
+          type: "http",
+          url: "http://aicoop.internal/mcp",
+          headers: { Authorization: "Bearer tok-123" },
+        },
+      },
     });
     expect(GATEWAY_MCP_URL).toBe("http://aicoop.internal/mcp");
   });

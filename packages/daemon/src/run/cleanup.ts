@@ -6,11 +6,12 @@
  * 1. ホームの `.claude/` の中を、`projects/`（セッション）以外すべて消す
  *    - `projects/` の中でも、リンク（辿らない）と、プロジェクトごとの `memory/`
  *      （Claude Code が自動で読む指示ファイル）は消す
+ *    - ホームの直下も、`.claude` 以外すべて消す（`.bashrc`・`.gitconfig` など。T-13）
  * 2. 作業フォルダの直下の `CLAUDE.md`・`.claude/`・`.mcp.json`（と `CLAUDE.local.md`）を、
  *    `.aicoop-quarantine/<run_id>/` に移して、監査ログ `quarantine` を書く
  *    - 大文字・小文字の違う名前も移す（大文字・小文字を区別しないファイルシステムでは同じものとして読まれる）
  *    - リポジトリの中（例：`repos/app/CLAUDE.md`）にあるものは移さない
- * 3. ホームの `.claude.json` を消す
+ * 3. ホームの `.claude.json` を消す（1 のホームの直下の掃除で消える）
  *
  * 箱の中の者は、ホームと作業フォルダに何でも置ける（リンクも）。ホストのこのコードは
  * **リンクを決して辿らない**：`lstat` で見て、リンクならリンクそのものを消す・移す。
@@ -70,9 +71,22 @@ function ensureMountRoot(path: string, what: string): void {
   }
 }
 
-/** 5.4.4 の1・3：ホームの `.claude/`（projects/ 以外）と `.claude.json` を消す */
+/**
+ * 5.4.4 の1・3：ホームの中を、`.claude/projects/`（セッション）以外すべて消す。
+ *
+ * 設計書の5.4.4 は `.claude/`（projects/ 以外）と `.claude.json` だけを挙げているが、Claude Code の Bash の
+ * 道具は `~/.bashrc`・`~/.zshrc` を読み込み、git は `~/.gitconfig`・`~/.config/git/`（`core.fsmonitor`
+ * などでコマンドを動かせる）を読む。乗っ取られた社員がそこに仕掛けを残せないよう（T-13）、
+ * 何が読まれるかを数え上げずに、ホームの直下は `.claude` 以外すべて消す（`.claude.json` もここで消える）。
+ * 実行をまたいで残したい知識は `/work/notes/` に書く（5.4.3 の2）。
+ */
 export function cleanMemberHome(homeDir: string): void {
   ensureMountRoot(homeDir, "社員のホーム");
+
+  for (const name of readdirSync(homeDir)) {
+    // 大文字・小文字だけが違う `.Claude` なども消す（本物の `.claude` だけを残す）
+    if (name !== ".claude") remove(join(homeDir, name));
+  }
 
   const claude = join(homeDir, ".claude");
   ensureRealDir(claude);
@@ -87,11 +101,13 @@ export function cleanMemberHome(homeDir: string): void {
     }
     remove(path);
   }
-
-  remove(join(homeDir, ".claude.json"));
 }
 
-/** `projects/` の中：リンクとふつうでないファイルを消し、`<project>/memory/` を消す */
+/**
+ * `projects/` の中：リンクとふつうでないファイルを消し、`<project>/memory/` を消す。
+ * `memory` は大文字・小文字を区別せずに比べる（macOS のように区別しないファイルシステムでは、
+ * `MEMORY/` も Claude Code に `memory/` として読まれる）。
+ */
 function cleanProjects(dir: string, depth = 0): void {
   for (const name of readdirSync(dir)) {
     const path = join(dir, name);
@@ -99,7 +115,7 @@ function cleanProjects(dir: string, depth = 0): void {
     if (st.isSymbolicLink() || !(st.isDirectory() || st.isFile())) {
       remove(path);
     } else if (st.isDirectory()) {
-      if (depth === 1 && name === "memory") remove(path);
+      if (depth === 1 && name.toLowerCase() === "memory") remove(path);
       else cleanProjects(path, depth + 1);
     }
   }

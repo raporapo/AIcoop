@@ -259,6 +259,52 @@ describe("5.2.8：本物の資格を、実行の開始時に用意する（資�
     await expect(run).rejects.not.toThrow(/ghs_LEAK|PRIVATE KEY|Bearer/);
   });
 
+  it.each([
+    ["github_app", { app_id: 1, installation_id: 2, private_key: PEM }, "github", /GitHub App/],
+    ["google_oauth", { client_id: "c", client_secret: "s", refresh_token: "r" }, "gmail", /Google/],
+  ] as const)(
+    "%s の発行先が答えなければ、時間内にあきらめて CredentialError（実行を starting のまま止めない）",
+    async (kind, value, id, message) => {
+      const config = devConfig({
+        groups: {
+          dev: {
+            name: "開発部",
+            box: "vm",
+            ceiling: [{ op: "github.repo.read" }, { op: "gmail.draft.create" }],
+          },
+        },
+        roles: {
+          implementer: {
+            name: "実装",
+            allow: [{ op: "github.repo.read" }, { op: "gmail.draft.create" }],
+          },
+        },
+        members: { "dev-implementer": { name: "実装AI", group: "dev", role: "implementer" } },
+      });
+      setSecret(secretsPath, id, kind, value);
+      let aborted = false;
+      const hanging = (async (_input: unknown, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => {
+            aborted = true;
+            reject(new DOMException("aborted", "TimeoutError"));
+          });
+        })) as typeof fetch;
+      const run = prepareBoxSecrets({
+        config,
+        effective: effective(config, "dev-implementer").filter((p) => p.op.startsWith(`${id}.`)),
+        secretsPath,
+        fetch: hanging,
+        now: NOW,
+        timeoutMs: 50,
+      });
+      await expect(run).rejects.toBeInstanceOf(CredentialError);
+      await expect(run).rejects.toThrow(message);
+      await expect(run).rejects.toThrow(/時間内/);
+      expect(aborted).toBe(true);
+    },
+  );
+
   it("google_oauth：リフレッシュトークンから、トークンのエンドポイントでアクセストークンを発行する", async () => {
     const config = devConfig({
       groups: {

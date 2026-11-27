@@ -45,10 +45,12 @@ afterEach(async () => {
   tmp.cleanup();
 });
 
-async function connect(): Promise<Client> {
+async function connect(token: string | null = gateway.token): Promise<Client> {
   const client = new Client({ name: "fake-claude", version: "0.0.0" });
   await client.connect(
-    new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${gateway.port}/mcp`)),
+    new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${gateway.port}/mcp`), {
+      requestInit: token === null ? {} : { headers: { authorization: `Bearer ${token}` } },
+    }),
   );
   return client;
 }
@@ -68,8 +70,12 @@ function errorOf(result: Awaited<ReturnType<typeof call>>): { error: string; mes
   return JSON.parse(content[0]?.text ?? "null");
 }
 
-/** Host ヘッダーを決めて生の HTTP を送る（fetch は Host を変えられない） */
-function rawPost(host: string, path = "/mcp"): Promise<number> {
+/** Host ヘッダー・Authorization を決めて生の HTTP を送る（fetch は Host を変えられない） */
+function rawPost(
+  host: string,
+  path = "/mcp",
+  authorization: string | null = `Bearer ${gateway.token}`,
+): Promise<number> {
   return new Promise((resolve, reject) => {
     const body = JSON.stringify({
       jsonrpc: "2.0",
@@ -89,6 +95,7 @@ function rawPost(host: string, path = "/mcp"): Promise<number> {
         method: "POST",
         headers: {
           host,
+          ...(authorization === null ? {} : { authorization }),
           "content-type": "application/json",
           accept: "application/json, text/event-stream",
           "content-length": Buffer.byteLength(body),
@@ -139,6 +146,42 @@ describe("5.3.1：道具ゲート（MCP、Streamable HTTP）", () => {
     expect(await rawPost("aicoop.internal", "/other")).toBe(404);
   });
 
+  it("P-1・5.3.1 の1：その実行のトークン（Authorization: Bearer）がなければ 401。ホストのほかのプロセスからは呼べない", async () => {
+    expect(await rawPost("aicoop.internal", "/mcp", null)).toBe(401);
+    expect(await rawPost(`127.0.0.1:${gateway.port}`, "/mcp", null)).toBe(401);
+    expect(await rawPost("aicoop.internal", "/mcp", "Bearer wrong-token")).toBe(401);
+    expect(await rawPost("aicoop.internal", "/mcp", `Bearer ${gateway.token}x`)).toBe(401);
+    expect(await rawPost("aicoop.internal", "/mcp", `Basic ${gateway.token}`)).toBe(401);
+    expect(await rawPost("aicoop.internal", "/mcp", gateway.token)).toBe(401);
+    // パスを知る前に止める（/mcp 以外も 401）
+    expect(await rawPost("aicoop.internal", "/other", null)).toBe(401);
+    await expect(connect(null)).rejects.toThrow();
+    expect(await rawPost("aicoop.internal")).toBe(200);
+  });
+
+  it("トークンは実行（ゲート）ごとに別のランダムな値で、ほかの実行のゲートには効かない", async () => {
+    const other = await openGateway({
+      db,
+      memberId: "dev-reviewer",
+      taskId: newId("task"),
+      workDir: work,
+      onReport: () => {},
+    });
+    try {
+      expect(other.token).not.toBe(gateway.token);
+      expect(gateway.token).toMatch(/^[A-Za-z0-9_-]{43,}$/);
+      await expect(
+        new Client({ name: "x", version: "0" }).connect(
+          new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${other.port}/mcp`), {
+            requestInit: { headers: { authorization: `Bearer ${gateway.token}` } },
+          }),
+        ),
+      ).rejects.toThrow();
+    } finally {
+      await other.close();
+    }
+  });
+
   it("閉じたら、もうつながらない（実行が終わったらポートを閉じる）", async () => {
     await gateway.close();
     await expect(connect()).rejects.toThrow();
@@ -165,6 +208,25 @@ describe("5.3.3：report_result の入力の検証（9.3 の invalid_input）", 
       expect(errorOf(await call(args)).error).toBe("invalid_input");
     }
     expect((await call({ summary: "あ".repeat(4000) })).isError).toBeFalsy();
+  });
+
+  it("P-1：summary に端末を操る制御文字（ESC・C1 など）や、向きを変える文字があれば invalid_input（オーナーの画面に出るので）", async () => {
+    const c = (code: number) => String.fromCodePoint(code);
+    for (const bad of [
+      `${c(0x1b)}]52;c;ZXZpbA==${c(0x07)}済`, // OSC 52（クリップボードの書き換え）
+      `${c(0x1b)}[2K${c(0x1b)}[1A成功しました`, // 行を消して書き直す
+      `済${c(0x9b)}31m`, // C1 の CSI
+      `済${c(0x00)}`,
+      `済${c(0x7f)}`,
+      `失敗${c(0x202e)}しました`, // 向きの上書き
+      `済${c(0x2066)}x${c(0x2069)}`, // 向きの分離
+      `済${c(0x200f)}`, // 向きの印
+    ]) {
+      expect(errorOf(await call({ summary: bad })).error).toBe("invalid_input");
+    }
+    expect(reports).toEqual([]);
+    // 改行・タブはよい
+    expect((await call({ summary: "1行目\n\t2行目\r\n3行目" })).isError).toBeFalsy();
   });
 
   it("files が51個以上・文字列の配列でないなら invalid_input", async () => {

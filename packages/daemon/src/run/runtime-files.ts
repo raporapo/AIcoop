@@ -3,7 +3,7 @@
  *
  * - ホームの `.claude/CLAUDE.md`（5.4.3 の1）と、空の `.claude/settings.json`（5.4.4 の1）
  * - `runtime/<run_id>/`（5.1.7）：
- *   - `etc/mcp.json`（5.3.1 の5。道具ゲート1つだけ）
+ *   - `etc/mcp.json`（5.3.1 の5。道具ゲート1つだけ。その実行のゲートのトークンを含む）
  *   - `managed/managed-settings.json`（5.3.8）
  *   - `skills/<name>/`（5.3.6。役職の `skills` だけを `~/.aicoop/skills/` から複製する）
  *
@@ -19,6 +19,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import { isId } from "@aicoop/shared";
 import type { AicoopPaths } from "../paths.ts";
 import { managedSettings, mcpConfig } from "./managed-settings.ts";
 
@@ -39,18 +40,27 @@ export interface RuntimeDirResult {
 
 const SKILL_NAME = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
+export interface RuntimeDirOptions {
+  /** その実行の道具ゲートのトークン（mcp.json の Authorization ヘッダーに書く） */
+  readonly gatewayToken: string;
+}
+
 /** `runtime/<run_id>/` を作り、MCP の設定・管理設定・スキルを置く */
 export function prepareRuntimeDir(
   paths: AicoopPaths,
   runId: string,
   skills: readonly string[],
+  options: RuntimeDirOptions,
 ): RuntimeDirResult {
   const etc = paths.runEtc(runId);
   const managed = paths.runManaged(runId);
   const skillsDir = paths.runSkills(runId);
   for (const dir of [etc, managed, skillsDir]) mkdirSync(dir, { recursive: true });
 
-  writeFileSync(join(etc, "mcp.json"), `${JSON.stringify(mcpConfig(), null, 2)}\n`);
+  writeFileSync(
+    join(etc, "mcp.json"),
+    `${JSON.stringify(mcpConfig(options.gatewayToken), null, 2)}\n`,
+  );
   writeFileSync(
     join(managed, "managed-settings.json"),
     `${JSON.stringify(managedSettings(), null, 2)}\n`,
@@ -89,6 +99,27 @@ function copyTree(from: string, to: string): void {
 /** 実行の終わりに `runtime/<run_id>/` を消す。何度呼んでもよい */
 export function removeRuntimeDir(paths: AicoopPaths, runId: string): void {
   rmSync(paths.runDir(runId), { recursive: true, force: true });
+}
+
+/**
+ * 制御サーバーの起動のとき（まだどの実行も動いていないとき）に、前の制御サーバーが落ちて残した
+ * `runtime/<run_id>/` をすべて消す（8.6）。消した実行の ID を返す。実行のフォルダ（`r_...`）以外は触らない
+ */
+export function removeStaleRuntimeDirs(paths: AicoopPaths): string[] {
+  let names: string[];
+  try {
+    names = readdirSync(paths.runtimeDir);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw e;
+  }
+  const removed: string[] = [];
+  for (const name of names) {
+    if (!isId(name, "run")) continue;
+    rmSync(join(paths.runtimeDir, name), { recursive: true, force: true });
+    removed.push(name);
+  }
+  return removed;
 }
 
 function lstatOrNull(path: string): Stats | null {
