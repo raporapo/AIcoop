@@ -30,3 +30,62 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm verify
+
+  # vm の箱（Gondolin の microVM）を本当に起こす結合テスト（16章 V-1・V-2・V-4・V-6、P1 完了条件1・3、5.1.4、5.1.7）。
+  # 時間がかかるので verify とは別のジョブにする。
+  vm-integration:
+    name: vm integration (Gondolin, KVM)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - name: KVM を使えるようにする
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+      - name: QEMU を入れる
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils
+          qemu-system-x86_64 --version
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: 結合テスト
+        env:
+          AICOOP_VM_IT: "1"
+        run: pnpm vitest run packages/box-gondolin/src/vm.integration.test.ts --reporter=verbose
+
+  # vm のベースイメージ（5.1.8）を組み立て、その箱で Claude Code が動くか確かめる（16章 V-9）
+  vm-image:
+    name: vm image (5.1.8, V-9)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - name: KVM を使えるようにする
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+      - name: QEMU と mke2fs を入れる
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils e2fsprogs
+          qemu-system-x86_64 --version
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: イメージの組み立てと結合テスト
+        env:
+          AICOOP_VM_IT_IMAGE: "1"
+        run: pnpm vitest run packages/box-gondolin/src/vm.integration.test.ts --reporter=verbose
