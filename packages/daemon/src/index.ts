@@ -9,6 +9,9 @@ export {
   pruneAuditLog,
   verifyAuditLog,
 } from "./db/audit.ts";
+// 一時権限（判定に使う部分）と保留の記録（5.2.4 の2、5.2.6 の1）
+export { activeGrantsFor } from "./db/grants.ts";
+export { createHold, getHold, type Hold, type NewHoldInput } from "./db/holds.ts";
 export {
   type OpenStateDbOptions,
   openStateDb,
@@ -48,8 +51,40 @@ export {
   transitionTask,
 } from "./db/tasks.ts";
 export { getUsageState, setUsageState, type UsageState, usageGate } from "./db/usage.ts";
+// 道具ゲート（5.3.1〜5.3.3、9.3）
+export {
+  type Gateway,
+  type GatewayErrorCode,
+  type GatewayOptions,
+  openGateway,
+  ReportRejectedError,
+  type ReportResult,
+} from "./gateway/server.ts";
 // ~/.aicoop の中の置き場所（6.1）
 export { type AicoopPaths, aicoopPaths, resolveAicoopHome } from "./paths.ts";
+// 資格プロキシの判定（5.2.4〜5.2.6 の1）
+export {
+  createProxyHandler,
+  HOLD_FILE_FORMAT,
+  MAX_HOLD_BODY_BYTES,
+  type ProxyContext,
+  readHoldFile,
+  type SavedHoldRequest,
+} from "./proxy/decide.ts";
+// 1つのタスクを1回実行する（8.1）
+export {
+  type CleanupResult,
+  cleanMemberHome,
+  cleanupBeforeRun,
+  QUARANTINE_DIR,
+  quarantineWorkFiles,
+} from "./run/cleanup.ts";
+export { createStartRun, type StartRunOptions, startRun } from "./run/execute.ts";
+export { GATEWAY_MCP_URL, managedSettings, mcpConfig } from "./run/managed-settings.ts";
+export { GUEST_PATHS, vmMounts } from "./run/mounts.ts";
+export { createRedactor, type Redactor } from "./run/redact.ts";
+export { removeRuntimeDir } from "./run/runtime-files.ts";
+export { parseStreamLine, type StreamEvent } from "./run/stream-json.ts";
 // 実行と制御サーバーの境界
 export type {
   BoxDrivers,
@@ -60,6 +95,18 @@ export type {
   RunRequest,
   StartRun,
 } from "./run/types.ts";
+// 資格の用意（5.2.8 の4、5.4.1）
+export {
+  type AnthropicTokenResult,
+  CredentialError,
+  githubAppJwt,
+  githubPermissionsFor,
+  githubRepositoriesFor,
+  type PreparedSecrets,
+  type PrepareSecretsInput,
+  prepareBoxSecrets,
+  readAnthropicToken,
+} from "./secrets/issue.ts";
 // 資格保管庫（5.2.8）
 export {
   listSecrets,
