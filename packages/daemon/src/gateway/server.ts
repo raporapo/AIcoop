@@ -3,6 +3,10 @@
  *
  * - 実行ごとに `127.0.0.1` の空いているポートで、パス `/mcp` だけで待ち受ける。ポートと実行は1対1
  *   なので、呼び出し元の社員はポートで決まる。実行が終わったら閉じる（5.3.1 の1）
+ * - `127.0.0.1` のポートは、ホストのほかのプロセスからも届く。実行ごとにランダムなトークンを作り、
+ *   `Authorization: Bearer <トークン>` のないリクエストは 401 にする（時間が一定の比較）。
+ *   トークンは箱の中の `/etc/aicoop/mcp.json` の `headers` で Claude Code に渡す（箱の中の AI には
+ *   見えるが、その実行のゲートにしか効かない）。ログには書かない
  * - vm の箱からは `http://aicoop.internal/mcp` で届く（Gondolin の `tcp.hosts`。5.3.1 の2）ので、
  *   `Host: aicoop.internal` を受け付ける。それ以外の Host（DNS リバインディング）と、ブラウザからの
  *   リクエスト（`Origin` あり）は受け付けない
@@ -13,7 +17,7 @@
  * セッションを持たない形（stateless）で動かす：POST ごとに MCP サーバーを作って答える。
  * Claude Code がつなぎ直しても、前の接続の状態に左右されない。
  */
-import { createHash } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { GATEWAY_HOST } from "@aicoop/box-gondolin";
@@ -59,6 +63,11 @@ export interface GatewayOptions {
 
 export interface Gateway {
   readonly port: number;
+  /**
+   * この実行のゲートのトークン（`Authorization: Bearer <token>`。32バイトの乱数の base64url）。
+   * mcp.json に書いて箱へ渡す。ログには書かない（伏せ字にする）
+   */
+  readonly token: string;
   /** ポートを閉じる。何度呼んでもよい */
   close(): Promise<void>;
 }
@@ -68,6 +77,8 @@ const MAX_TOOL_NAME = 128;
 
 export async function openGateway(options: GatewayOptions): Promise<Gateway> {
   let port = 0;
+  const token = randomBytes(32).toString("base64url");
+  const expected = digest(`Bearer ${token}`);
   const allowedHosts = () => [GATEWAY_HOST, `${GATEWAY_HOST}:80`, `127.0.0.1:${port}`];
 
   const http = createServer((req, res) => {
@@ -82,6 +93,12 @@ export async function openGateway(options: GatewayOptions): Promise<Gateway> {
     const host = req.headers.host;
     if (host === undefined || !allowedHosts().includes(host) || req.headers.origin !== undefined) {
       respondJson(res, 403, { error: "forbidden" });
+      return;
+    }
+    // パスより先に確かめる（トークンのない者には、何も答えない）
+    const authorization = req.headers.authorization;
+    if (typeof authorization !== "string" || !timingSafeEqual(digest(authorization), expected)) {
+      respondJson(res, 401, { error: "unauthorized" });
       return;
     }
     const path = (req.url ?? "").split("?", 1)[0];
@@ -120,6 +137,7 @@ export async function openGateway(options: GatewayOptions): Promise<Gateway> {
   let closing: Promise<void> | null = null;
   return {
     port,
+    token,
     close() {
       closing ??= new Promise<void>((resolve) => {
         http.close(() => resolve());
@@ -209,6 +227,11 @@ function toolError(code: GatewayErrorCode, message: string): CallToolResult {
     isError: true,
     content: [{ type: "text", text: JSON.stringify({ error: code, message }) }],
   };
+}
+
+/** 時間が一定の比較のために、長さをそろえる（SHA-256） */
+function digest(text: string): Buffer {
+  return createHash("sha256").update(text, "utf8").digest();
 }
 
 function argsHash(args: unknown): string {

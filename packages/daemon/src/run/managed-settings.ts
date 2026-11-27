@@ -34,8 +34,22 @@ export function managedSettings(): Record<string, unknown> {
   };
 }
 
-export function mcpConfig(): Record<string, unknown> {
+/**
+ * `--mcp-config` に渡す MCP の設定。道具ゲート1つだけで、その実行のゲートのトークンを
+ * `Authorization` ヘッダーで渡す（Claude Code の MCP の設定の `headers`）。
+ * トークンは `${VAR}` の展開を使わずに書く（展開できない値を空にされないように）。
+ */
+export function mcpConfig(gatewayToken: string): Record<string, unknown> {
+  if (!/^[A-Za-z0-9_-]+$/.test(gatewayToken)) {
+    throw new TypeError("道具ゲートのトークンの形が不正です");
+  }
   return {
-    mcpServers: { [GATEWAY_SERVER_NAME]: { type: "http", url: GATEWAY_MCP_URL } },
+    mcpServers: {
+      [GATEWAY_SERVER_NAME]: {
+        type: "http",
+        url: GATEWAY_MCP_URL,
+        headers: { Authorization: `Bearer ${gatewayToken}` },
+      },
+    },
   };
 }

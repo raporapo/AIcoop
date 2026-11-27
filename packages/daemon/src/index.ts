@@ -1,5 +1,7 @@
 // ローカルHTTP API の形（9.2）
 export * from "./api/contract.ts";
+// 承認の署名と、承認される対象の境界（5.8）
+export type { ApprovalSubject, ApprovalTarget, ApprovalTargets } from "./approvals/types.ts";
 export { isProcessAlive, readDaemonInfo } from "./daemon/runtime-files.ts";
 // 制御サーバー本体（aicoop daemon）
 export {

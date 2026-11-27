@@ -43,7 +43,7 @@ function request(over: Partial<ProxiedRequest> = {}): ProxiedRequest {
   };
 }
 
-function handlerFor(config: CompanyConfig, memberId: string) {
+function handlerFor(config: CompanyConfig, memberId: string, active: () => boolean = () => true) {
   return createProxyHandler({
     db,
     paths,
@@ -52,6 +52,7 @@ function handlerFor(config: CompanyConfig, memberId: string) {
     taskId: newId("task"),
     memberId,
     thread: "task-x",
+    active,
   });
 }
 
@@ -106,6 +107,27 @@ describe("P1 完了条件2：許可していないリポジトリへの push は
     });
   });
 
+  it("P-1・5.1.3 の2：実行が動いていない（Claude Code の起動前・終了後・箱が壊れずに残った）ときは、許可していても forward しない", async () => {
+    const config = loadTestCompany(paths.home);
+    let active = false;
+    const onRequest = handlerFor(config, "dev-implementer", () => active);
+
+    const before = await onRequest(push("myorg/app"));
+    expect(before).toMatchObject({ status: 403, headers: { "X-Aicoop-Decision": "deny" } });
+    expect(bodyOf(before)).toEqual({ aicoop: "deny", operation: null, reason: "not_allowed" });
+
+    active = true;
+    expect(await onRequest(push("myorg/app"))).toEqual({ action: "forward" });
+
+    active = false;
+    expect(await onRequest(push("myorg/app"))).toMatchObject({ status: 403 });
+    expect(decisions().map((d) => [d.decision, d.reason])).toEqual([
+      ["deny", "run_not_active"],
+      ["allow", null],
+      ["deny", "run_not_active"],
+    ]);
+  });
+
   it("push を許可していない役職（reviewer）からは、同じリポジトリでも 403", async () => {
     const config = loadTestCompany(paths.home);
     expect(await handlerFor(config, "dev-reviewer")(push("myorg/app"))).toMatchObject({
@@ -147,6 +169,20 @@ describe("5.2.4・5.10：判定と監査ログ proxy.decision", () => {
     expect(rows.every((r) => r.actor === "member:dev-implementer")).toBe(true);
     expect(JSON.stringify(rows)).not.toContain("SECRET");
     expect(verifyAuditLog(db).ok).toBe(true);
+  });
+
+  it("11.5：監査ログに書くパスの中の仮の札は伏せ字にする", async () => {
+    const config = loadTestCompany(paths.home);
+    const placeholder = `GONDOLIN_SECRET_${"0f".repeat(24)}`;
+    await handlerFor(
+      config,
+      "sales-researcher",
+    )(request({ host: "example.com", path: `/collect/${placeholder}/x` }));
+    expect(decisions().at(-1)).toMatchObject({
+      decision: "allow",
+      path: "/collect/GONDOLIN_SECRET_****/x",
+    });
+    expect(JSON.stringify(listAuditLog(db))).not.toContain(placeholder);
   });
 
   it("どの操作にも当たらない宛先は no_operation、操作はあるが許可にないものは not_allowed", async () => {
@@ -336,6 +372,33 @@ describe("5.2.5・5.2.6 の1：保留（hold）", () => {
       { from: null, to: "pending_owner", by: "system" },
     ]);
     expect(decisions().at(-1)).toMatchObject({ decision: "hold", operation: "gmail.message.send" });
+  });
+
+  it("11.5・5.2.6 の1：仮の札の入ったヘッダーは、名前を問わず保存しない。URL の中の仮の札は伏せ字にする", async () => {
+    const config = loadTestCompany(paths.home, salesFiles(false));
+    const placeholder = `GONDOLIN_SECRET_${"ab".repeat(24)}`;
+    const decision = await handlerFor(
+      config,
+      "sales-mailer",
+    )(
+      send(new Uint8Array([1]), {
+        path: `/gmail/v1/users/me/messages/send?key=${placeholder}`,
+        headers: {
+          "x-goog-api-key": placeholder,
+          "x-api-key": `k-${placeholder}`,
+          "content-type": "application/json",
+        },
+      }),
+    );
+    const holdId = bodyOf(decision).hold_id as string;
+    const raw = readFileSync(paths.holdFile(holdId));
+    const saved = readHoldFile(raw);
+    expect(saved.headers).toEqual({ "content-type": "application/json" });
+    expect(saved.url).toBe(
+      "https://gmail.googleapis.com/gmail/v1/users/me/messages/send?key=GONDOLIN_SECRET_****",
+    );
+    expect(raw.toString("latin1")).not.toContain(placeholder);
+    expect(JSON.stringify(listAuditLog(db))).not.toContain(placeholder);
   });
 
   it("5.7.1 の1：部署に部長がいれば pending_manager", async () => {
