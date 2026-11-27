@@ -4,6 +4,7 @@ import type { BuildImageOptions } from "@aicoop/box-gondolin";
 import type { DaemonInfo, StartRun } from "@aicoop/daemon";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type FakeDaemon, startFakeDaemon } from "../testing/fake-daemon.ts";
+import { statusResponse } from "../testing/fixtures.ts";
 import { createTestCli, type TestCli } from "../testing/harness.ts";
 import type { DaemonEntry, StartDaemonOptions } from "./daemon-entry.ts";
 
@@ -139,7 +140,7 @@ describe("9.1 aicoop daemon：前面で動かし、Ctrl+C で止める", () => {
 
   it("すでに動いていれば 1", async () => {
     const other = await startFakeDaemon(cli.home);
-    other.on("GET /status", { body: {} });
+    other.on("GET /status", { body: statusResponse() });
     try {
       const r = await cli.run(["daemon"]);
       expect(r.code).toBe(1);
@@ -193,7 +194,7 @@ describe("9.1 aicoop start：裏で起動し、API が応答するまで待つ",
         spawnDaemon: (home, logFile) => {
           spawnCalls.push({ home, logFile });
           void startFakeDaemon(home, { pid: 9999 }).then((d) => {
-            d.on("GET /status", { body: {} });
+            d.on("GET /status", { body: statusResponse() });
             spawned = d;
           });
           return { pid: 9999, exited: new Promise(() => undefined) };
@@ -219,7 +220,7 @@ describe("9.1 aicoop start：裏で起動し、API が応答するまで待つ",
 
   it("すでに動いていれば、何もしない（0）", async () => {
     const other = await startFakeDaemon(cli.home);
-    other.on("GET /status", { body: {} });
+    other.on("GET /status", { body: statusResponse() });
     try {
       const r = await cli.run(["start"]);
       expect(r.code).toBe(0);
@@ -227,6 +228,19 @@ describe("9.1 aicoop start：裏で起動し、API が応答するまで待つ",
       expect(spawnCalls).toHaveLength(0);
     } finally {
       await other.close();
+    }
+  });
+
+  it("daemon.json が古く、そのポートをほかのソフトが使っていても、動いているとはみなさない", async () => {
+    const foreign = await startFakeDaemon(cli.home, { pid: 1234 });
+    foreign.on("GET /status", { body: "<html>ComfyUI</html>" });
+    try {
+      const r = await cli.run(["start"]);
+      expect(r.code, r.stderr).toBe(0);
+      expect(spawnCalls).toHaveLength(1);
+      expect(r.stdout).toContain("起動しました");
+    } finally {
+      await foreign.closeServer();
     }
   });
 
@@ -314,7 +328,7 @@ describe("9.1 aicoop stop：POST /shutdown で止め、止まるまで待つ", (
 
   it("止まったら「止めました」（0）", async () => {
     const d = await startFakeDaemon(cli.home, { pid: 5555 });
-    d.on("GET /status", { body: {} });
+    d.on("GET /status", { body: statusResponse() });
     d.on("POST /shutdown", () => {
       setTimeout(() => {
         void d.close();
@@ -336,7 +350,7 @@ describe("9.1 aicoop stop：POST /shutdown で止め、止まるまで待つ", (
 
   it("API が止まってもプロセスが残れば 1", async () => {
     const d = await startFakeDaemon(cli.home, { pid: 5556 });
-    d.on("GET /status", { body: {} });
+    d.on("GET /status", { body: statusResponse() });
     d.on("POST /shutdown", () => {
       setTimeout(() => void d.close(), 10);
       return { body: { ok: true } };

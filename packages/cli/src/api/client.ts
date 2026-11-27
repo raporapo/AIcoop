@@ -201,11 +201,16 @@ export async function probeDaemon(
     return { running: false };
   }
   try {
-    await client.get("/status", { timeoutMs });
-    return { running: true, client };
+    const status = await client.get<unknown>("/status", { timeoutMs });
+    // daemon.json が古く、そのポートをほかのソフトが使っていることがある。daemon の応答の形か確かめる
+    const isDaemon =
+      typeof status === "object" &&
+      status !== null &&
+      typeof (status as { daemon?: unknown }).daemon === "object";
+    return isDaemon ? { running: true, client } : { running: false };
   } catch (e) {
-    // 認証の誤りは「動いている」（別の起動のトークンを持っている）
-    if (e instanceof ApiRequestError) return { running: true, client };
+    // daemon の形の誤り（認証の誤りなど）は「動いている」（別の起動のトークンを持っている）
+    if (e instanceof ApiRequestError && e.body !== null) return { running: true, client };
     return { running: false };
   }
 }
