@@ -3,15 +3,16 @@
  *
  * どの要求も、次の順に確かめてから道に進む（拒否側に倒す）。
  * 1. `Host` が `127.0.0.1:<port>`・`localhost:<port>` のどちらか（DNS リバインディング対策）→ 違えば 403 `forbidden_host`
- * 2. `Authorization: Bearer <api_token>`（時間が一定の比較）→ 違えば 401 `unauthorized`
- * 3. 本文は 64 KiB まで → 超えれば 413
+ * 2. 本文は 64 KiB まで → 超えれば 413
+ * 3. 認証なしの道（承認アプリの画面 `/app/*`、端末の登録・ログイン。`routes/`）
+ * 4. `Authorization: Bearer <api_token>`（時間が一定の比較）か、承認アプリのセッションクッキー（`auth.ts`）
+ *    → 違えば 401 `unauthorized`。クッキーで来た POST は `Origin` が違えば 403 `forbidden_origin`
  *
  * 待ち受けるのは `127.0.0.1` だけ（4.3 の2。`listenApi`）。
  *
- * HTTP のステータス：400 `invalid_input`、401 `unauthorized`、403 `forbidden_host`、404 `not_found`、
+ * HTTP のステータス：400 `invalid_input`、401 `unauthorized`、403 `forbidden_host`・`forbidden_origin`、404 `not_found`、
  * 409 `invalid_state`、413・415 `invalid_input`、422 `unknown_member`・`config_invalid`、500 `internal`
  */
-import { createHash, timingSafeEqual } from "node:crypto";
 import type { Server } from "node:http";
 import {
   type CompanyConfig,
@@ -29,6 +30,7 @@ import { desc, inArray } from "drizzle-orm";
 import { type Context, Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import type { Logger } from "pino";
+import type { ApprovalService } from "../approvals/service.ts";
 import { listAuditLog } from "../db/audit.ts";
 import type { StateDb } from "../db/open.ts";
 import { listRunsForTask } from "../db/runs.ts";
@@ -37,6 +39,7 @@ import { cancelTask, createTask, getTask, InvalidTaskTransitionError } from "../
 import { getUsageState, type UsageState } from "../db/usage.ts";
 import type { RunHandle } from "../run/types.ts";
 import type { RunnableCheck } from "../triggers/runnable.ts";
+import { actorOf, authenticate, requireBearer } from "./auth.ts";
 import {
   API_PREFIX,
   type ApiError,
@@ -60,6 +63,8 @@ import {
   type UsageResponse,
   type UsageView,
 } from "./contract.ts";
+import { appRoutes } from "./routes/app.ts";
+import { protectedApprovalRoutes, publicApprovalRoutes } from "./routes/approvals.ts";
 
 /** 本文の上限 */
 export const MAX_BODY_BYTES = 64 * 1024;
@@ -67,7 +72,6 @@ const MAX_PURPOSE_CHARS = 2000;
 const MAX_DONE_WHEN_CHARS = 2000;
 const MAX_CONTEXT_CHARS = 32_000;
 const MAX_TIMEOUT_MINUTES = 55;
-const MAX_TOKEN_CHARS = 512;
 
 /** API の向こう側（daemon の中身）。テストではなく daemon の本体が渡す */
 export interface ApiControl {
@@ -95,6 +99,10 @@ export interface ApiControl {
     | { readonly ok: false; readonly issues: readonly ConfigIssue[] };
   /** 応答を返したあとで止め始める */
   shutdown(): void;
+  /** 端末の登録・ログイン・承認の署名（5.8） */
+  readonly approvals: ApprovalService;
+  /** 承認アプリの静的ファイル（packages/approver/dist） */
+  readonly approverDir: string;
 }
 
 /** 道の中で投げて、決まった形の失敗を返す */
@@ -118,15 +126,6 @@ export class ApiFailure extends Error {
 
 function errorBody(code: ApiErrorCode, message: string, issues?: readonly ConfigIssue[]): ApiError {
   return issues === undefined ? { error: code, message } : { error: code, message, issues };
-}
-
-function digest(value: string): Buffer {
-  return createHash("sha256").update(value, "utf8").digest();
-}
-
-/** 時間が一定の比較（長さが違っても例外にしない） */
-function tokenMatches(given: string, expected: string): boolean {
-  return timingSafeEqual(digest(given), digest(expected));
 }
 
 const invalid = (message: string) => new ApiFailure(400, "invalid_input", message);
@@ -275,28 +274,7 @@ export function createApiApp(control: ApiControl): Hono {
     await next();
   });
 
-  // 2. トークン
-  app.use("*", async (c, next) => {
-    const header = c.req.header("authorization") ?? "";
-    const m = /^bearer ([A-Za-z0-9_-]+)$/i.exec(header);
-    const given = m?.[1];
-    if (
-      given === undefined ||
-      given.length > MAX_TOKEN_CHARS ||
-      !tokenMatches(given, control.token)
-    ) {
-      return c.json(
-        errorBody(
-          "unauthorized",
-          "トークンがないか、違います（runtime/api_token のトークンを Authorization: Bearer で送ってください。daemon を起動するたびに作り直されます）",
-        ),
-        401,
-      );
-    }
-    await next();
-  });
-
-  // 3. 本文の上限
+  // 2. 本文の上限
   app.use(
     "*",
     bodyLimit({
@@ -314,6 +292,14 @@ export function createApiApp(control: ApiControl): Hono {
     c.header("Cache-Control", "no-store");
     c.header("X-Content-Type-Options", "nosniff");
   });
+
+  // 3. 認証なしの道：承認アプリの画面（/app/*）、端末の登録・ログイン（Origin を確かめる。5.8）
+  const approvalRoutes = { approvals: control.approvals, logger, port: control.port };
+  app.route("/", appRoutes(control.approverDir));
+  app.route(API_PREFIX, publicApprovalRoutes(approvalRoutes));
+
+  // 4. 認証：Bearer トークン（CLI）か、承認アプリのセッションクッキー（auth.ts）
+  app.use("*", authenticate({ ...approvalRoutes, token: control.token }));
 
   const api = new Hono();
 
@@ -408,7 +394,7 @@ export function createApiApp(control: ApiControl): Hono {
         doneWhen: req.done_when,
         timeoutMinutes: req.timeout_minutes ?? timeoutMinutesFor(config),
       },
-      { actor: "owner:cli" },
+      { actor: actorOf(c) },
     );
     logger.info({ task_id: task.id, member: task.memberId }, "手動のタスクを作りました");
     control.taskCreated();
@@ -454,7 +440,7 @@ export function createApiApp(control: ApiControl): Hono {
       );
     }
     try {
-      const result = cancelTask(db, id, { actor: "owner:cli" });
+      const result = cancelTask(db, id, { actor: actorOf(c) });
       logger.info({ task_id: id }, "タスクを取り消しました");
       const body: CancelTaskResponse = {
         task: toTaskView(result.task),
@@ -469,7 +455,7 @@ export function createApiApp(control: ApiControl): Hono {
     }
   });
 
-  api.post("/reload", (c) => {
+  api.post("/reload", requireBearer, (c) => {
     const result = control.reload();
     if (!result.ok) {
       throw new ApiFailure(
@@ -536,12 +522,15 @@ export function createApiApp(control: ApiControl): Hono {
     return c.json(body);
   });
 
-  api.post("/shutdown", (c) => {
+  api.post("/shutdown", requireBearer, (c) => {
     logger.info("API から止めるよう頼まれました");
     control.shutdown();
     const body: ShutdownResponse = { ok: true };
     return c.json(body);
   });
+
+  // 端末の登録（CLI）・ログイン中の端末・端末・承認の署名（5.8）
+  api.route("/", protectedApprovalRoutes(approvalRoutes));
 
   app.route(API_PREFIX, api);
 

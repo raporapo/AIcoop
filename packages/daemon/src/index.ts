@@ -1,7 +1,10 @@
 // ローカルHTTP API の形（9.2）
 export * from "./api/contract.ts";
 // 承認の署名と、承認される対象の境界（5.8）
+export { SESSION_COOKIE } from "./approvals/sessions.ts";
+export { APPROVAL_TTL_MS, challengeFor, summarySha256 } from "./approvals/sign.ts";
 export type { ApprovalSubject, ApprovalTarget, ApprovalTargets } from "./approvals/types.ts";
+export { appOrigin, RP_ID } from "./approvals/webauthn.ts";
 export { isProcessAlive, readDaemonInfo } from "./daemon/runtime-files.ts";
 // 制御サーバー本体（aicoop daemon）
 export {

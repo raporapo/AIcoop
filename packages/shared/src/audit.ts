@@ -101,6 +101,15 @@ export interface AuditDataMap {
     readonly event: "start" | "stop";
     readonly by: string;
   };
+  /**
+   * 承認アプリの端末（subject は端末ID）の登録・取り消し（5.8 の2、T-12）。5.10 の3の表にはない種類
+   * （取り消しは `approval` ではないので、別の種類にした）。登録は from が null。名前などの中身は書かない
+   */
+  "device.state": {
+    readonly from: "active" | null;
+    readonly to: "active" | "revoked";
+    readonly by: string;
+  };
   /** 保存期間で消した範囲（5.10 の5） */
   checkpoint: CheckpointData;
 }
