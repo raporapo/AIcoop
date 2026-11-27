@@ -1,0 +1,30 @@
+{
+  "name": "@aicoop/daemon",
+  "version": "0.0.0",
+  "private": true,
+  "description": "AIcoop の制御サーバー：資格プロキシ・道具ゲート・ローカルAPI・タスクの順番待ち",
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@aicoop/box-gondolin": "workspace:*",
+    "@aicoop/shared": "workspace:*",
+    "@hono/node-server": "^2.1.11",
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "better-sqlite3": "^13.2.0",
+    "croner": "^11.0.1",
+    "drizzle-orm": "^0.45.4",
+    "hono": "^4.13.22",
+    "pino": "^10.4.0",
+    "yaml": "^2.9.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0"
+  }
+}

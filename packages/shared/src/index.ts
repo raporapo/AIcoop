@@ -1,3 +1,16 @@
+export type {
+  Box,
+  BoxDriver,
+  BoxKind,
+  BoxSecret,
+  BoxSpec,
+  ExecHandle,
+  ExecLine,
+  Mount,
+  NetworkPolicy,
+  ProxiedRequest,
+  ProxyDecision,
+} from "./box.ts";
 export { canonicalJson } from "./canonical-json.ts";
 export { type ConfigIssue, isError, type ParseResult } from "./config-issue.ts";
 export { matchesGlob } from "./glob.ts";
