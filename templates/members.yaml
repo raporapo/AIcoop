@@ -1,0 +1,36 @@
+# =============================================================================
+# members.yaml：社員（設計書 6.5）
+# =============================================================================
+#
+# - 社員ID（行の先頭のキー）は、英小文字・数字・ハイフンで1〜40文字です。
+#   社員の会話の続き（~/.aicoop/data/members/<社員ID>/home/）がこの ID にひもづくので、
+#   あとから変えないでください。
+# - name：承認アプリなどに出す名前
+# - group：所属する部署（groups.yaml）
+# - role：役職（roles.yaml）
+# - prompt：その社員だけへの調整を書いた md（prompts/ からの相対パス）。
+#   書かなければ、prompts/members/<社員ID>.md があれば使います。
+# - 同じ部署の社員は、同じ箱を1人ずつ順番に使います（同時には動きません）。
+#
+# 手で仕事を頼むとき：
+#   aicoop run dev-implementer --purpose "目的" --done-when "完了の条件" [--context "背景"]
+
+members:
+  dev-implementer: { name: "実装AI", group: "dev", role: "implementer" }
+  dev-reviewer: { name: "レビューAI", group: "dev", role: "reviewer" }
+  sales-researcher: { name: "調査AI", group: "sales", role: "researcher" }
+
+  # ▼ [P2] メール作成AI（groups.yaml の営業部の gmail、roles.yaml の mail-writer と一緒に）
+  # sales-mailer: { name: "メール作成AI", group: "sales", role: "mail-writer" }
+  # ▲
+
+  # ▼ [P4] 部長・画像AI・CEO（groups.yaml・roles.yaml の同じ印の部分と一緒に）
+  # # 部長は役員室（executives）で動き、manages に書いた部署を担当する。1つの部署に部長は1人
+  # mgr-dev: { name: "開発部長AI", group: "executives", role: "manager", manages: "dev" }
+  # mgr-sales: { name: "営業部長AI", group: "executives", role: "manager", manages: "sales" }
+  # design-image: { name: "画像AI", group: "design", role: "image" }
+  # # CEO は1人だけ。部署 ceo に置く
+  # ceo: { name: "CEO AI", group: "ceo", role: "ceo" }
+  # ▲
+
+  # [P6] 人間の社員（ほかの会社の人）は、aicoop peer add で足されます。手で書く必要はありません。
