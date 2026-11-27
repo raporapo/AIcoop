@@ -39,6 +39,12 @@ describe("11.7：使い方（--help）は日本語で、例と関連するコマ
     }
   });
 
+  it("9.1 の P2 の行（pair・devices・devices revoke）がある。承認をするコマンドはない（P-4）", () => {
+    const names = COMMANDS.map((c) => c.name);
+    for (const name of ["pair", "devices", "devices revoke"]) expect(names).toContain(name);
+    for (const name of names) expect(name).not.toMatch(/approv|reject|accept|sign/);
+  });
+
   it("どのコマンドにも、使い方・例・関連するコマンドがある", async () => {
     for (const c of COMMANDS) {
       const r = await cli.run([...c.name.split(" "), "--help"]);

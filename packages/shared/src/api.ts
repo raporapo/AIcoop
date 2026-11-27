@@ -37,6 +37,8 @@ export type ApiErrorCode =
   | "unauthorized"
   /** Host ヘッダーが 127.0.0.1・localhost ではない（DNS リバインディング対策） */
   | "forbidden_host"
+  /** クッキー・認証なしの POST で、`Origin` が `http://localhost:<port>` ではない（CSRF 対策。P2） */
+  | "forbidden_origin"
   | "not_found"
   /** 入力が型・上限に合わない */
   | "invalid_input"
@@ -292,7 +294,14 @@ export interface LocalPairingStatusResponse {
   readonly device_name: string | null;
   /** registered からあと。6桁の数字 */
   readonly confirm_code: string | null;
+  /**
+   * cancelled のときの理由（ほかは null）：`cancelled`（CLI が取り消した）、`superseded`（新しい
+   * aicoop pair --local が始まった）、`too_many_attempts`（違うコードが何度も送られた）
+   */
+  readonly cancel_reason: PairingCancelReason | null;
 }
+
+export type PairingCancelReason = "cancelled" | "superseded" | "too_many_attempts";
 
 /** `POST /pairing/local/{code}/activate`（Bearer）。registered のときだけ */
 export interface ActivatePairingResponse {

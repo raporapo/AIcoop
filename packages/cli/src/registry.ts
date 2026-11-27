@@ -29,6 +29,7 @@ export const SECTION_TITLES: Readonly<Record<CommandSection, string>> = {
   daemon: "制御サーバー",
   secret: "資格",
   work: "仕事",
+  device: "承認アプリの端末",
   record: "記録",
 };
 
@@ -396,6 +397,62 @@ export const COMMANDS: readonly CommandDef[] = [
     load: () => import("./commands/cancel.ts"),
   },
   {
+    name: "pair",
+    section: "device",
+    summary: "承認アプリの端末を登録する（P2 は --local：この PC のブラウザ）",
+    usage: ["pair --local"],
+    description: [
+      "1回限りのコード（10分で失効）と承認アプリの URL を出します。PC のブラウザで開いてコードを入れ、",
+      "パスキーを作ると、ここに確認コードと端末の名前が出ます。ブラウザに出た確認コードと同じなら y を押すと、",
+      "端末が有効になります（それまでは、その端末でログインも承認もできません）。Ctrl+C で取りやめます。",
+      "確認コードを見比べるので、端末から実行してください。",
+      "スマホの登録（QRコード・中継）は P3 でできるようになります。",
+    ],
+    options: [
+      {
+        name: "local",
+        type: "boolean",
+        description: "この PC のブラウザ（http://localhost）を登録する",
+      },
+    ],
+    positionals: [],
+    examples: [{ command: "pair --local", note: "この PC のブラウザを承認アプリの端末にする" }],
+    related: ["devices", "devices revoke"],
+    load: () => import("./commands/pair.ts"),
+  },
+  {
+    name: "devices",
+    section: "device",
+    summary: "承認アプリの端末の一覧",
+    usage: ["devices [--json]", "devices revoke <id> [--yes]"],
+    description: ["取り消した端末も、取り消した時刻とともに出します。"],
+    options: [json("一覧")],
+    positionals: [],
+    examples: [{ command: "devices", note: "登録した端末を見る" }],
+    related: ["devices revoke", "pair"],
+    load: () => import("./commands/devices.ts").then((m) => ({ run: m.runList })),
+  },
+  {
+    name: "devices revoke",
+    section: "device",
+    summary: "承認アプリの端末を取り消す（なくしたとき）",
+    usage: ["devices revoke <id> [--yes]"],
+    description: [
+      "取り消した端末では、ログインも承認もできなくなります。ログイン中のセッションも、すぐ無効になります。",
+      "端末から実行すると、取り消してよいか確かめます。スクリプトからは --yes を付けます。",
+    ],
+    options: [
+      { name: "yes", short: "y", type: "boolean", description: "確かめずに取り消す" },
+      json("取り消した端末"),
+    ],
+    positionals: [{ name: "id", required: true, description: "端末の ID（d_ で始まる）" }],
+    examples: [
+      { command: "devices revoke d_01JD6V8X3S0Q5W7KQ9M2T4R6YB", note: "なくした端末を取り消す" },
+    ],
+    related: ["devices", "pair"],
+    load: () => import("./commands/devices.ts").then((m) => ({ run: m.runRevoke })),
+  },
+  {
     name: "audit verify",
     section: "record",
     summary: "監査ログのつながりを確かめる",
@@ -449,6 +506,35 @@ export const SYNONYMS: Readonly<Record<string, string>> = {
   "image make": "image build",
   "audit check": "audit verify",
   "audit validate": "audit verify",
+  device: "devices",
+  pairing: "pair --local",
+  unpair: "devices revoke",
+  "devices list": "devices",
+  "devices ls": "devices",
+  "devices show": "devices",
+  "devices rm": "devices revoke",
+  "devices remove": "devices revoke",
+  "devices delete": "devices revoke",
+  "devices del": "devices revoke",
+  "devices disable": "devices revoke",
+};
+
+/**
+ * ないコマンドと、その理由（実行はせず、案内だけする）。
+ * 承認をするコマンドは作らない（9.1・P-4：承認は承認アプリのパスキーの署名だけで行う）
+ */
+const NO_APPROVAL_COMMAND: readonly string[] = [
+  "承認をするコマンドはありません。承認・却下は、承認アプリでパスキーの署名で行います（設計書 9.1・P-4）",
+  "承認アプリは、daemon が動いている PC のブラウザで http://localhost:<daemon.port>/app/ を開きます（端末の登録：aicoop pair --local）",
+];
+
+export const NOT_COMMANDS: Readonly<Record<string, readonly string[]>> = {
+  approve: NO_APPROVAL_COMMAND,
+  reject: NO_APPROVAL_COMMAND,
+  accept: NO_APPROVAL_COMMAND,
+  deny: NO_APPROVAL_COMMAND,
+  sign: NO_APPROVAL_COMMAND,
+  approvals: NO_APPROVAL_COMMAND,
 };
 
 export function findCommand(name: string): CommandDef | undefined {

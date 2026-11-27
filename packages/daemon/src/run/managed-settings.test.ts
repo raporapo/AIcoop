@@ -26,6 +26,10 @@ describe("5.3.8：vm の箱の Claude Code の管理設定（V-8）", () => {
     });
   });
 
+  it("T-3：WebSearch を禁止する（Anthropic の側で動き、資格プロキシの判定を通らずに外へ文字列を出せる）", () => {
+    expect(settings.permissions).toEqual({ deny: ["WebSearch"] });
+  });
+
   it("決めたキーのほかは書かない（知らないキーで設定を緩めない）", () => {
     expect(Object.keys(settings).sort()).toEqual(
       [
@@ -34,6 +38,7 @@ describe("5.3.8：vm の箱の Claude Code の管理設定（V-8）", () => {
         "disableAllHooks",
         "enableAllProjectMcpServers",
         "env",
+        "permissions",
         "strictKnownMarketplaces",
       ].sort(),
     );

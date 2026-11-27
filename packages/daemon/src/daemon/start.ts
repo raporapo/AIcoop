@@ -27,6 +27,7 @@ import {
 } from "@aicoop/shared";
 import type { Logger } from "pino";
 import type { DaemonInfo, RunningBoxView, TriggerView } from "../api/contract.ts";
+import { defaultApproverDir } from "../api/routes/app.ts";
 import {
   type ApiControl,
   closeApiServer,
@@ -34,6 +35,7 @@ import {
   createApiServer,
   listenApi,
 } from "../api/server.ts";
+import { createApprovalService } from "../approvals/service.ts";
 import type { ApprovalTargets } from "../approvals/types.ts";
 import { appendAudit, pruneAuditLog } from "../db/audit.ts";
 import { openStateDb, type StateDb } from "../db/open.ts";
@@ -112,6 +114,10 @@ export interface StartDaemonOptions {
   readonly timers?: Timers;
   /** 止めるときに、実行が終わるのを待つ長さの上限（ミリ秒。既定 60000） */
   readonly stopTimeoutMs?: number;
+  /** オーナーの承認を待つ対象（保留・一時権限など。5.8 の3）。なければ、どの種類も承認できない */
+  readonly approvalTargets?: ApprovalTargets;
+  /** 承認アプリの静的ファイルの場所（既定：packages/approver/dist。テスト用） */
+  readonly approverDir?: string;
 }
 
 export interface DaemonHandle {
@@ -320,7 +326,8 @@ export async function startDaemon(options: StartDaemonOptions): Promise<DaemonHa
       onTaskCreated: () => scheduler.kick(),
       canRun: (cfg, memberId) => checkRunnableMember(cfg, memberId, drivers).ok,
     };
-    approvalTargets = createHoldTargets(holdDeps);
+    // 承認の対象：保留・一時権限（holds/targets.ts）。options で渡したものが同じ種類なら、そちらを使う
+    approvalTargets = { ...createHoldTargets(holdDeps), ...options.approvalTargets };
     scheduler = createTaskScheduler({
       db,
       env,
@@ -329,6 +336,16 @@ export async function startDaemon(options: StartDaemonOptions): Promise<DaemonHa
       timers,
       now,
       logger,
+    });
+
+    // 端末の登録・ログイン・承認の署名（5.8）。状態はこのプロセスのメモリの中だけ
+    const approvals = createApprovalService({
+      db,
+      logger,
+      now,
+      port: () => port,
+      company: () => config.aicoop.company,
+      targets: () => approvalTargets,
     });
 
     const canRun = (memberId: string) => checkRunnableMember(config, memberId, drivers);
@@ -373,6 +390,8 @@ export async function startDaemon(options: StartDaemonOptions): Promise<DaemonHa
             options.stopTimeoutMs === undefined ? {} : { timeoutMs: options.stopTimeoutMs },
           );
           await closeApiServer(server);
+          // 承認のあとの処理（保留の再送など）を待ってから state.db を閉じる
+          await approvals.drain();
         } catch (error) {
           logger.error({ err: error }, "止める途中でエラーが起きました");
         } finally {
@@ -460,6 +479,8 @@ export async function startDaemon(options: StartDaemonOptions): Promise<DaemonHa
         // 応答を返し終えてから止め始める
         setTimeout(() => void stop(), 0);
       },
+      approvals,
+      approverDir: options.approverDir ?? defaultApproverDir(),
     };
 
     server = createApiServer(createApiApp(control));

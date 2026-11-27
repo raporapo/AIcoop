@@ -7,6 +7,9 @@
  * - `enableAllProjectMcpServers: false`：作業フォルダの `.mcp.json` を読み込まない
  * - `disableAllHooks: true`：管理設定に書くと、すべてのフックを止める
  * - `env`：不要な通信（テレメトリ・エラー報告など）を止める（5.2.7 の2）
+ * - `permissions.deny: ["WebSearch"]`：WebSearch は Anthropic の側で動き、素通しの通信の中を通るので、
+ *   資格プロキシの判定（部署の上限・役職の許可）を通らずに外へ文字列を出せる（T-3）。Web は `web.read` で読む。
+ *   起動の引数の `--disallowedTools WebSearch` と重ねて止める
  *
  * vm の箱では、実行ごとに `runtime/<run_id>/managed/managed-settings.json` に書き、
  * 箱の `/etc/claude-code/managed-settings.json` に読み取り専用でマウントする。
@@ -26,6 +29,7 @@ export function managedSettings(): Record<string, unknown> {
     allowManagedMcpServersOnly: true,
     enableAllProjectMcpServers: false,
     disableAllHooks: true,
+    permissions: { deny: ["WebSearch"] },
     env: {
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
       DISABLE_TELEMETRY: "1",

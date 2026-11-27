@@ -9,7 +9,14 @@ import { CliError, UsageError } from "./errors.ts";
 import { EXIT } from "./exit-codes.ts";
 import { commandHelp, groupHelp, topHelp } from "./help.ts";
 import { resolveHome } from "./home.ts";
-import { COMMANDS, findCommand, GLOBAL_OPTIONS, GROUPS, SYNONYMS } from "./registry.ts";
+import {
+  COMMANDS,
+  findCommand,
+  GLOBAL_OPTIONS,
+  GROUPS,
+  NOT_COMMANDS,
+  SYNONYMS,
+} from "./registry.ts";
 import { suggest } from "./suggest.ts";
 import { createPrinter, type Printer } from "./ui/printer.ts";
 import { shouldColor } from "./ui/style.ts";
@@ -112,6 +119,12 @@ async function dispatch(
     }
     name = `${word} ${sub}`;
     rest = rest.slice(1);
+  } else if (hasSubcommands(word) && rest[0] !== undefined && !rest[0].startsWith("-")) {
+    // コマンドそのものでもあり、続けて書くこともあるもの（aicoop devices・aicoop devices revoke）
+    const sub = `${word} ${rest[0]}`;
+    if (findCommand(sub) === undefined) throw unknownCommand(sub, rest[1]);
+    name = sub;
+    rest = rest.slice(1);
   }
 
   const command = findCommand(name);
@@ -159,13 +172,23 @@ function printHelpFor(words: readonly string[], out: Printer): number {
   return EXIT.ok;
 }
 
+/** 名前のあとに続けて書くコマンドがあるか（`devices` → `devices revoke`） */
+function hasSubcommands(word: string): boolean {
+  return COMMANDS.some((c) => c.name.startsWith(`${word} `));
+}
+
 /** `next` は、知らない名前のすぐ後ろの語（`aicoop scret list` の list） */
 function unknownCommand(name: string, next?: string): UsageError {
+  if (Object.hasOwn(NOT_COMMANDS, name)) {
+    return new UsageError(`知らないコマンドです：${name}`, [...(NOT_COMMANDS[name] ?? [])]);
+  }
   const synonym = Object.hasOwn(SYNONYMS, name) ? SYNONYMS[name] : undefined;
   const group = name.split(" ")[0] ?? "";
   const candidates: string[] =
-    Object.hasOwn(GROUPS, group) && name.includes(" ")
-      ? COMMANDS.filter((c) => c.name.startsWith(`${group} `)).map((c: CommandDef) => c.name)
+    hasSubcommands(group) && name.includes(" ")
+      ? COMMANDS.filter((c) => c.name === group || c.name.startsWith(`${group} `)).map(
+          (c: CommandDef) => c.name,
+        )
       : [...COMMANDS.map((c) => c.name), ...Object.keys(GROUPS)];
   const close = (synonym !== undefined ? [synonym] : suggest(name, candidates)).map((c) =>
     // まとまりの名前の打ち間違いなら、続く語まで含めて案内する（aicoop secret list）

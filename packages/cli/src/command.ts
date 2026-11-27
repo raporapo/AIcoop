@@ -5,7 +5,7 @@ import type { OptionSpec, ParsedArgs, PositionalSpec } from "./args.ts";
 import type { CliContext } from "./context.ts";
 import type { Printer } from "./ui/printer.ts";
 
-export type CommandSection = "setup" | "daemon" | "secret" | "work" | "record";
+export type CommandSection = "setup" | "daemon" | "secret" | "work" | "device" | "record";
 
 export interface CommandExample {
   readonly command: string;

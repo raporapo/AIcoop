@@ -7,6 +7,8 @@
  *   --dangerously-skip-permissions [--resume <session_id>]
  * ```
  *
+ * `--disallowedTools WebSearch`：WebSearch は Anthropic の側で動き、資格プロキシの判定を通らないので渡さない
+ * （T-3。管理設定の `permissions.deny` と重ねて止める）。
  * `--dangerously-skip-permissions` は vm と srt の箱の中でだけ付ける。CEO（none）では付けてはならない（5.11）。
  * このモジュールは vm の箱だけを扱う。
  */
@@ -17,6 +19,9 @@ export const BOX_ENV: Readonly<Record<string, string>> = Object.freeze({
   HOME: GUEST_PATHS.home,
   // 5.2.7 の2
   CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+  // vm の箱の中のコマンドは root で動く。Claude Code は root では --dangerously-skip-permissions を断って
+  // すぐに終わるので、箱（サンドボックス）の中であることを伝える（箱が安全の境界。5.4.2）
+  IS_SANDBOX: "1",
 });
 
 export interface ClaudeCommandInput {
@@ -61,6 +66,8 @@ export function claudeArgv(input: ClaudeCommandInput): string[] {
     "--mcp-config",
     GUEST_PATHS.mcpConfig,
     "--strict-mcp-config",
+    "--disallowedTools",
+    "WebSearch",
     "--dangerously-skip-permissions",
     ...(input.resume === null ? [] : ["--resume", input.resume]),
   ];

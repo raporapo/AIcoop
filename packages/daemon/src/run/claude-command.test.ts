@@ -19,8 +19,17 @@ describe("5.4.2：claude -p の起動のしかた（vm の箱）", () => {
       "--mcp-config",
       "/etc/aicoop/mcp.json",
       "--strict-mcp-config",
+      "--disallowedTools",
+      "WebSearch",
       "--dangerously-skip-permissions",
     ]);
+  });
+
+  it("T-3：WebSearch は道具の一覧から外す（資格プロキシを通らない。Web は web.read の許可で読む）", () => {
+    const argv = claudeArgv({ prompt: "p", model: "sonnet", maxTurns: 1, resume: null });
+    const i = argv.indexOf("--disallowedTools");
+    expect(i).toBeGreaterThan(0);
+    expect(argv[i + 1]).toBe("WebSearch");
   });
 
   it("5.4.5 の4：続きから始めるときだけ --resume <session_id> を付ける", () => {
@@ -45,12 +54,21 @@ describe("5.4.2：claude -p の起動のしかた（vm の箱）", () => {
     expect(BOX_ENV).toEqual({
       HOME: "/home/agent",
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+      IS_SANDBOX: "1",
     });
     expect(claudeExecEnv("sk-ant-oat01-x")).toEqual({
       HOME: "/home/agent",
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+      IS_SANDBOX: "1",
       CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-x",
     });
+  });
+
+  it("vm の箱の中の claude は root で動く。--dangerously-skip-permissions は root では断られるので、箱の中であることを IS_SANDBOX=1 で伝える（P1 の結合テストで、本物の Claude Code が起動しなかった不具合）", () => {
+    expect(claudeArgv({ prompt: "p", model: "sonnet", maxTurns: 1, resume: null })).toContain(
+      "--dangerously-skip-permissions",
+    );
+    expect(claudeExecEnv("t").IS_SANDBOX).toBe("1");
   });
 });
 
