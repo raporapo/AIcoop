@@ -1,5 +1,14 @@
 // ローカルHTTP API の形（9.2）
 export * from "./api/contract.ts";
+export { isProcessAlive, readDaemonInfo } from "./daemon/runtime-files.ts";
+// 制御サーバー本体（aicoop daemon）
+export {
+  type DaemonHandle,
+  DaemonStartError,
+  type DaemonStartErrorCode,
+  type StartDaemonOptions,
+  startDaemon,
+} from "./daemon/start.ts";
 // state.db（7章）
 export {
   AuditChainBrokenError,
@@ -60,6 +69,7 @@ export {
   ReportRejectedError,
   type ReportResult,
 } from "./gateway/server.ts";
+export type { LineStream } from "./log.ts";
 // ~/.aicoop の中の置き場所（6.1）
 export { type AicoopPaths, aicoopPaths, resolveAicoopHome } from "./paths.ts";
 // 資格プロキシの判定（5.2.4〜5.2.6 の1）

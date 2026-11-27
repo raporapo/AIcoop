@@ -2214,6 +2214,18 @@ aicoop/
 | V-10 | Claudeアプリの音声モードから、自作のリモートMCPを使える | P6 | OpenAIの gpt-realtime を声の窓口にする（従量課金になる） |
 | V-11 | Cloudflare Workersで動くWeb Pushの実装 | P3 | 実装時に1つ選び、第12章に追記する |
 
+### 確かめた結果
+
+P1 で、GitHub Actions の ubuntu-latest（x86_64、KVM を有効にしたもの）で Gondolin 0.14.0 の箱を実際に起動して確かめた。CI のジョブ `vm integration (Gondolin, KVM)`・`vm image (5.1.8, V-9)` が、変更のたびに同じことを確かめ続ける（`packages/box-gondolin/src/vm.integration.test.ts`）。macOS（Apple Silicon）と arm64 の Linux は、まだ確かめていない。
+
+| # | 結果 | 根拠 |
+|---|---|---|
+| V-1 | **できる**。駄目だったときの決定は使わない | `tcp.hosts` の `api.anthropic.com:443` は資格プロキシを通らず、箱の中で見た証明書の発行者は Google Trust Services（Gondolin の MITM の CA ではない）。組み立てたイメージで `claude -p`（無効なトークン、`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`）は Anthropic から `401 authentication_failed` を受け取り、資格プロキシで拒否した宛先はなかった（3 は、本物のログインで仕事をさせたときに改めて確かめる）。接続の開始・終了は Gondolin の公開の API では分からないので、5.2.7 の1 のとおり監査ログには書かない |
+| V-2 | **できる** | 箱の中の `curl http://aicoop.internal/mcp` が、ホストの `127.0.0.1:<ポート>` のサーバーに届いた |
+| V-4 | **できる** | `memoryMiB: 1536, cpus: 1` で QEMU が `-m 1536M -smp 1` で起動し、箱の中は CPU 1・`MemTotal` 約1.44 GiB。ホストから見た QEMU のメモリ（VmRSS）は、起動直後 約240 MiB、`claude --version` のあと 約410 MiB、`claude -p` が認証エラーで終わったあと 約590 MiB。仕事をしているときの使用量は、本物のログインで測ってから 5.1.6・11.3 の既定値を見直す |
+| V-6 | **できる** | 書き込める `/home/agent` の中に、読み取り専用の `/home/agent/.claude/skills` を重ねられた（読めて、書き込み・削除・作成・移動は失敗する） |
+| V-9 | **動く**。駄目だったときの決定は使わない | 公式のネイティブ版の musl 版（`downloads.claude.ai` の `linux-x64-musl`）を Alpine のイメージに入れ、`claude --version` が `2.1.332 (Claude Code)` を返した |
+
 ---
 
 ## 17. 将来の拡張（v1ではやらない）
