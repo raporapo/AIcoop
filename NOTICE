@@ -18,5 +18,12 @@ This product is licensed under the Apache License, Version 2.0 (see LICENSE).
 - @hono/node-server          MIT License         https://github.com/honojs/node-server
 - @modelcontextprotocol/sdk  MIT License         https://github.com/modelcontextprotocol/typescript-sdk
 - pino                       MIT License         https://github.com/pinojs/pino
+- @simplewebauthn/server     MIT License         https://github.com/MasterKale/SimpleWebAuthn
+
+承認アプリ（PWA）に組み込むもの
+
+- react・react-dom           MIT License         https://github.com/facebook/react
+- @simplewebauthn/browser    MIT License         https://github.com/MasterKale/SimpleWebAuthn
+- workbox（vite-plugin-pwa） MIT License         https://github.com/GoogleChrome/workbox
 
 ComfyUI（GPL-3.0）と Ollama は同梱しない。HTTPで呼ぶだけにする（設計書 15.2）。
