@@ -1,0 +1,502 @@
+/**
+ * 制御サーバー本体（`aicoop daemon`。4.3、6.1、8.6、9.2、11.5）。
+ *
+ * 起動の順：
+ * 1. 設定を読む（エラーなら起動しない。`DaemonStartError` の `issues` に誤りを入れる。6.1・6.10）
+ * 2. すでに同じ home で daemon が動いていれば起動しない（`runtime/daemon.json` の pid と `runtime/daemon.lock`）
+ * 3. ログ（11.5）と state.db を開く → 監査ログ `config.load`（5.10）→ 再起動の後始末（8.6）
+ *    → 保存期間を過ぎた監査ログ・ログを消す（5.10 の5、11.5。このあと1日1回）
+ * 4. ローカルAPI のトークン（ランダム、`runtime/api_token`、0600、起動ごとに作り直す。9.2）
+ * 5. API を `127.0.0.1:<daemon.port>` で待ち受ける（4.3 の2）→ `runtime/daemon.json`
+ * 6. トリガー（cron）→ 順番待ちのループ
+ *
+ * 止めるとき（`stop`・`POST /shutdown`・`handleSignals` なら SIGINT・SIGTERM）：
+ * 新しいタスクを始めず、トリガーを止め、動いている実行をすべて `cancel("daemon_stop")` して待ち、
+ * API を閉じ、`daemon.json`・`api_token` を消し、state.db を閉じる。
+ */
+import { randomBytes } from "node:crypto";
+import { readFileSync, rmSync } from "node:fs";
+import type { Server } from "node:http";
+import { resolve } from "node:path";
+import { createGondolinDriver } from "@aicoop/box-gondolin";
+import {
+  type CompanyConfig,
+  type ConfigIssue,
+  type CronTriggerConfig,
+  loadConfig,
+} from "@aicoop/shared";
+import type { Logger } from "pino";
+import type { DaemonInfo, RunningBoxView, TriggerView } from "../api/contract.ts";
+import {
+  type ApiControl,
+  closeApiServer,
+  createApiApp,
+  createApiServer,
+  listenApi,
+} from "../api/server.ts";
+import { appendAudit, pruneAuditLog } from "../db/audit.ts";
+import { openStateDb, type StateDb } from "../db/open.ts";
+import { recoverAfterRestart } from "../db/restart.ts";
+import { createDaemonLogger, type LineStream, pruneOldLogs } from "../log.ts";
+import { aicoopPaths } from "../paths.ts";
+import type { BoxDrivers, RunEnvironment, StartRun } from "../run/types.ts";
+import { createTaskScheduler, type TaskScheduler } from "../scheduler/scheduler.ts";
+import { systemTimers, type TimerHandle, type Timers } from "../timers.ts";
+import { checkRunnableMember } from "../triggers/runnable.ts";
+import { createCronTask, startTriggers, type TriggerSet } from "../triggers/triggers.ts";
+import {
+  acquireDaemonLock,
+  type DaemonLock,
+  isProcessAlive,
+  readDaemonInfo,
+  writePrivateFile,
+} from "./runtime-files.ts";
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const LOCK_FILE = "daemon.lock";
+
+export type DaemonStartErrorCode =
+  /** 設定にエラーがある（issues に誤り） */
+  | "config_invalid"
+  /** 同じ home で daemon が動いている */
+  | "already_running"
+  /** daemon.port が使われている */
+  | "port_in_use"
+  /** そのほか（state.db が開けないなど） */
+  | "start_failed";
+
+/** daemon を起動できなかった。`message` は利用者に見せる日本語 */
+export class DaemonStartError extends Error {
+  override name = "DaemonStartError";
+  readonly code: DaemonStartErrorCode;
+  /** 設定の誤り（config_invalid のとき。CLI が並べて見せる） */
+  readonly issues: readonly ConfigIssue[];
+  constructor(
+    code: DaemonStartErrorCode,
+    message: string,
+    issues: readonly ConfigIssue[] = [],
+    cause?: unknown,
+  ) {
+    super(message, cause === undefined ? undefined : { cause });
+    this.code = code;
+    this.issues = issues;
+  }
+}
+
+export interface StartDaemonOptions {
+  /** 会社の設定の置き場所（`~/.aicoop`） */
+  readonly home: string;
+  /** 1件の実行（8.1）。順番が来たタスクごとに呼ぶ */
+  readonly startRun: StartRun;
+  /** 箱の種類ごとのドライバー。既定は `{ vm: createGondolinDriver() }` */
+  readonly drivers?: BoxDrivers;
+  /** 待ち受けるポート。なければ aicoop.yaml の daemon.port（0 なら空いているポート。テスト用） */
+  readonly port?: number;
+  /** 標準出力にも、人が読める形でログを出す（`aicoop daemon` を前面で動かすとき） */
+  readonly logToStdout?: boolean | LineStream;
+  /** 時刻の元（テスト用） */
+  readonly now?: () => Date;
+  /** 実行が外へ HTTP を送るときの fetch（テスト用。RunEnvironment に渡す） */
+  readonly fetch?: typeof fetch;
+  /** SIGINT・SIGTERM を受けたら止める（`aicoop daemon` は true にする） */
+  readonly handleSignals?: boolean;
+  /** タイマー（テスト用。cron・見直し・1日1回の片付け） */
+  readonly timers?: Timers;
+  /** 止めるときに、実行が終わるのを待つ長さの上限（ミリ秒。既定 60000） */
+  readonly stopTimeoutMs?: number;
+}
+
+export interface DaemonHandle {
+  /** 待ち受けているポート */
+  readonly port: number;
+  /** `runtime/daemon.json` に書いたもの */
+  readonly info: DaemonInfo;
+  /** ローカルAPI のトークン（`runtime/api_token` と同じ） */
+  readonly token: string;
+  /** 止める。何度呼んでもよい（同じものを返す） */
+  stop(): Promise<void>;
+  /** 止まったら解決する（stop・POST /shutdown・シグナルのどれでも） */
+  readonly stopped: Promise<void>;
+}
+
+function daemonVersion(): string {
+  try {
+    const pkg = JSON.parse(
+      readFileSync(new URL("../../package.json", import.meta.url), "utf8"),
+    ) as {
+      version?: unknown;
+    };
+    return typeof pkg.version === "string" ? pkg.version : "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+}
+
+function errorCode(e: unknown): string | undefined {
+  return typeof e === "object" && e !== null && "code" in e && typeof e.code === "string"
+    ? e.code
+    : undefined;
+}
+
+function alreadyRunning(pid: number, port: number | null, runtimeDir: string): DaemonStartError {
+  const where = port === null ? "" : `、ポート ${port}`;
+  return new DaemonStartError(
+    "already_running",
+    `制御サーバーは、すでに動いています（pid ${Number.isNaN(pid) ? "不明" : pid}${where}）。止めるときは aicoop stop を使ってください。動いていないのにこう出るときは、${runtimeDir} の daemon.json と ${LOCK_FILE} を消してください`,
+  );
+}
+export async function startDaemon(options: StartDaemonOptions): Promise<DaemonHandle> {
+  const home = resolve(options.home);
+  const now = options.now ?? (() => new Date());
+  const timers = options.timers ?? systemTimers;
+  const paths = aicoopPaths(home);
+  const lockPath = resolve(paths.runtimeDir, LOCK_FILE);
+
+  // 1. 設定
+  const loaded = loadConfig(home, { now: now() });
+  if (!loaded.ok) {
+    throw new DaemonStartError(
+      "config_invalid",
+      `設定にエラーがあるので、制御サーバーを起動しません（${loaded.issues.length}件。aicoop check で確かめられます）`,
+      loaded.issues,
+    );
+  }
+  let config: CompanyConfig = loaded.config;
+  let warnings: readonly ConfigIssue[] = loaded.warnings;
+  let configLoadedAt = now().toISOString();
+
+  // 2. 二重起動
+  const previous = readDaemonInfo(paths.daemonInfo);
+  if (previous !== null && isProcessAlive(previous.pid)) {
+    throw alreadyRunning(previous.pid, previous.port, paths.runtimeDir);
+  }
+  const acquired = acquireDaemonLock(lockPath);
+  if (!acquired.ok) throw alreadyRunning(acquired.pid, null, paths.runtimeDir);
+  const lock: DaemonLock = acquired.lock;
+
+  // ここから先で失敗したら、作ったものを片付けてから投げる
+  const undo: Array<() => void> = [() => lock.release()];
+  const cleanup = () => {
+    for (const fn of undo.splice(0).reverse()) {
+      try {
+        fn();
+      } catch {
+        // 片付けの失敗は、もとの失敗を隠さない
+      }
+    }
+  };
+
+  let logger: Logger;
+  let db: StateDb;
+  let token: string;
+  let server: Server;
+  let port: number;
+  let scheduler: TaskScheduler;
+  let triggers: TriggerSet;
+  let maintenanceTimer: TimerHandle | undefined;
+  let info: DaemonInfo;
+  let drivers: BoxDrivers;
+
+  try {
+    // 3. ログ・state.db
+    rmSync(paths.daemonInfo, { force: true });
+    const log = createDaemonLogger({
+      logsDir: paths.logsDir,
+      timezone: config.aicoop.timezone,
+      now,
+      ...(options.logToStdout !== undefined && { stdout: options.logToStdout }),
+    });
+    undo.push(() => log.close());
+    logger = log.logger;
+    logger.info({ home }, "制御サーバーを起動します");
+    for (const w of warnings) {
+      logger.warn({ code: w.code, source: w.source, path: w.path }, w.message);
+    }
+
+    db = openStateDb(paths.stateDb, { now });
+    undo.push(() => db.close());
+    appendAudit(db, {
+      actor: "system",
+      kind: "config.load",
+      subject: config.aicoop.company.id,
+      data: { files: config.fileHashes },
+    });
+
+    // 8.6：再起動の後始末（箱そのものを壊すのは、実行の側の仕事）
+    const recovery = recoverAfterRestart(db);
+    if (recovery.failed.length + recovery.requeued.length + recovery.endedRuns.length > 0) {
+      logger.warn(
+        { failed: recovery.failed, requeued: recovery.requeued, ended_runs: recovery.endedRuns },
+        "前回の制御サーバーが止まったときに動いていたタスクを片付けました（8.6）",
+      );
+    }
+
+    const maintenance = () => {
+      try {
+        const result = pruneAuditLog(db, { retentionDays: config.aicoop.audit.retention_days });
+        if (result.deleted > 0) {
+          logger.info({ deleted: result.deleted }, "保存期間を過ぎた監査ログを消しました（5.10）");
+        }
+      } catch (error) {
+        logger.error(
+          { err: error },
+          "監査ログの古い行を消せませんでした（aicoop audit verify で確かめてください）",
+        );
+      }
+      try {
+        const result = pruneOldLogs({
+          logsDir: paths.logsDir,
+          runLogsDir: paths.runLogsDir,
+          timezone: config.aicoop.timezone,
+          now: now(),
+        });
+        if (result.deleted.length > 0) {
+          logger.info({ count: result.deleted.length }, "30日を過ぎたログを消しました（11.5）");
+        }
+      } catch (error) {
+        logger.error({ err: error }, "古いログを消せませんでした");
+      }
+    };
+    maintenance();
+    const scheduleMaintenance = () => {
+      maintenanceTimer = timers.setTimeout(() => {
+        maintenance();
+        scheduleMaintenance();
+      }, DAY_MS);
+    };
+
+    // 4. トークン
+    token = randomBytes(32).toString("base64url");
+    log.addSecret(token);
+    writePrivateFile(paths.apiToken, token);
+    undo.push(() => rmSync(paths.apiToken, { force: true }));
+
+    drivers =
+      options.drivers ??
+      ({
+        vm: createGondolinDriver({
+          onProxyError: (error) =>
+            logger.error({ err: error }, "資格プロキシの判定で例外が起きました"),
+        }),
+      } satisfies BoxDrivers);
+    const env: RunEnvironment = {
+      db,
+      paths,
+      drivers,
+      logger,
+      now,
+      ...(options.fetch !== undefined && { fetch: options.fetch }),
+    };
+    scheduler = createTaskScheduler({
+      db,
+      env,
+      startRun: options.startRun,
+      config: () => config,
+      timers,
+      now,
+      logger,
+    });
+
+    const canRun = (memberId: string) => checkRunnableMember(config, memberId, drivers);
+    const buildTriggers = (): TriggerSet =>
+      startTriggers({
+        config,
+        timers,
+        now,
+        logger,
+        canRun,
+        onCron: (trigger: CronTriggerConfig) => {
+          const check = canRun(trigger.member);
+          if (!check.ok) {
+            logger.warn({ trigger: trigger.id }, check.message);
+            return;
+          }
+          const task = createCronTask(db, config, trigger, check.member);
+          logger.info({ task_id: task.id, trigger: trigger.id }, "cron のタスクを作りました");
+          scheduler.kick();
+        },
+      });
+    triggers = { views: () => [], stop: () => {} };
+
+    // 5. API
+    let stopPromise: Promise<void> | undefined;
+    let resolveStopped: () => void = () => {};
+    const stopped = new Promise<void>((r) => {
+      resolveStopped = r;
+    });
+    const stop = (): Promise<void> => {
+      stopPromise ??= (async () => {
+        try {
+          logger.info("制御サーバーを止めます");
+          if (options.handleSignals) {
+            process.off("SIGINT", signalHandler);
+            process.off("SIGTERM", signalHandler);
+          }
+          if (maintenanceTimer !== undefined) timers.clearTimeout(maintenanceTimer);
+          triggers.stop();
+          await scheduler.stop(
+            options.stopTimeoutMs === undefined ? {} : { timeoutMs: options.stopTimeoutMs },
+          );
+          await closeApiServer(server);
+        } catch (error) {
+          logger.error({ err: error }, "止める途中でエラーが起きました");
+        } finally {
+          logger.info("制御サーバーを止めました");
+          // daemon.json・api_token を消し、state.db を閉じ、鍵を外す（作った順の逆）
+
+          cleanup();
+          resolveStopped();
+        }
+      })();
+      return stopPromise;
+    };
+    const signalHandler = () => {
+      logger.info("シグナルを受けたので止めます");
+      void stop();
+    };
+
+    const control: ApiControl = {
+      db,
+      logger,
+      token,
+      port: () => port,
+      config: () => config,
+      warnings: () => warnings,
+      daemon: () => ({ ...info, config_loaded_at: configLoadedAt }),
+      runningBoxes: (): RunningBoxView[] =>
+        scheduler.active().map((h) => ({
+          group_id: h.groupId,
+          member_id: h.memberId,
+          task_id: h.taskId,
+          run_id: h.runId(),
+          box_kind: h.boxKind,
+          started_at: h.startedAt,
+        })),
+      triggers: (): TriggerView[] => triggers.views(),
+      canRun,
+      taskCreated: () => scheduler.kick(),
+      handleFor: (taskId) => scheduler.handleFor(taskId),
+      reload() {
+        const result = loadConfig(home, { now: now() });
+        if (!result.ok) {
+          logger.warn(
+            { count: result.issues.length },
+            "設定にエラーがあるので、読み直しませんでした",
+          );
+          return { ok: false, issues: result.issues };
+        }
+        const next = result.config;
+        if (next.aicoop.company.id !== config.aicoop.company.id) {
+          const issue: ConfigIssue = {
+            code: "E-013",
+            source: "aicoop.yaml",
+            path: "company.id",
+            message: `company.id は変えられません（起動したときは ${config.aicoop.company.id}）。もとに戻してください`,
+          };
+          logger.warn("company.id が変わっているので、読み直しませんでした");
+          return { ok: false, issues: [issue] };
+        }
+        if (next.aicoop.daemon.port !== config.aicoop.daemon.port) {
+          logger.warn(
+            { port, configured: next.aicoop.daemon.port },
+            "daemon.port の変更は、制御サーバーを起動し直すまで効きません",
+          );
+        }
+        config = next;
+        warnings = result.warnings;
+        configLoadedAt = now().toISOString();
+        appendAudit(db, {
+          actor: "owner:cli",
+          kind: "config.load",
+          subject: config.aicoop.company.id,
+          data: { files: config.fileHashes },
+        });
+        for (const w of warnings) {
+          logger.warn({ code: w.code, source: w.source, path: w.path }, w.message);
+        }
+        triggers.stop();
+        triggers = buildTriggers();
+        scheduler.kick();
+        logger.info("設定を読み直しました");
+        return { ok: true, warnings, files: config.fileHashes };
+      },
+      shutdown() {
+        // 応答を返し終えてから止め始める
+        setTimeout(() => void stop(), 0);
+      },
+    };
+
+    server = createApiServer(createApiApp(control));
+    const wanted = options.port ?? config.aicoop.daemon.port;
+    try {
+      port = await listenApi(server, wanted);
+    } catch (error) {
+      const code = errorCode(error);
+      if (code === "EADDRINUSE") {
+        throw new DaemonStartError(
+          "port_in_use",
+          `ポート ${wanted}（127.0.0.1）は、ほかのソフトが使っています。そのソフトを止めるか、aicoop.yaml の daemon.port を変えてください`,
+          [],
+          error,
+        );
+      }
+      if (code === "EACCES") {
+        throw new DaemonStartError(
+          "start_failed",
+          `ポート ${wanted} で待ち受ける権限がありません。aicoop.yaml の daemon.port を 1024 以上にしてください`,
+          [],
+          error,
+        );
+      }
+      throw error;
+    }
+    undo.push(() => {
+      server.close();
+      server.closeAllConnections();
+    });
+    server.on("error", (error) =>
+      logger.error({ err: error }, "API のサーバーでエラーが起きました"),
+    );
+
+    info = {
+      pid: process.pid,
+      port,
+      started_at: now().toISOString(),
+      home,
+      version: daemonVersion(),
+    };
+    writePrivateFile(paths.daemonInfo, `${JSON.stringify(info, null, 2)}\n`);
+    undo.push(() => rmSync(paths.daemonInfo, { force: true }));
+
+    // 6. トリガー・順番待ち
+    triggers = buildTriggers();
+    scheduler.start();
+    scheduler.kick();
+    scheduleMaintenance();
+    if (options.handleSignals) {
+      process.on("SIGINT", signalHandler);
+      process.on("SIGTERM", signalHandler);
+    }
+    logger.info(
+      { port, pid: process.pid },
+      `制御サーバーを起動しました（http://127.0.0.1:${port}/）`,
+    );
+
+    return {
+      port,
+      info,
+      token,
+      stop,
+      stopped,
+    };
+  } catch (error) {
+    cleanup();
+    if (error instanceof DaemonStartError) throw error;
+    throw new DaemonStartError(
+      "start_failed",
+      `制御サーバーを起動できませんでした：${error instanceof Error ? error.message : String(error)}`,
+      [],
+      error,
+    );
+  }
+}
