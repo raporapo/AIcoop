@@ -1,0 +1,25 @@
+# aicoop init が作った .gitignore（設計書 6.1）
+#
+# 設定（*.yaml・prompts/・services/・skills/・host_tools/）は git で管理することをおすすめします。
+# 次のものは、git に入れてはいけません。
+
+# 本物の資格（絶対に入れない）
+secrets.json
+
+# 状態（SQLite のデータベースと、その作業用のファイル）
+state.db
+state.db-wal
+state.db-shm
+state.db-journal
+
+# 保留したリクエストの本文
+state/
+
+# 部署の作業フォルダと、社員のホーム（会話の記録を含む）
+data/
+
+# 実行ごとに作り、実行の終わりに消すもの
+runtime/
+
+# ログ
+logs/
