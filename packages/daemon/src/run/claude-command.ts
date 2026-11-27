@@ -17,6 +17,9 @@ export const BOX_ENV: Readonly<Record<string, string>> = Object.freeze({
   HOME: GUEST_PATHS.home,
   // 5.2.7 の2
   CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+  // vm の箱の中のコマンドは root で動く。Claude Code は root では --dangerously-skip-permissions を断って
+  // すぐに終わるので、箱（サンドボックス）の中であることを伝える（箱が安全の境界。5.4.2）
+  IS_SANDBOX: "1",
 });
 
 export interface ClaudeCommandInput {

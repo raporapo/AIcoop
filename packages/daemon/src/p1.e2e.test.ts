@@ -250,6 +250,8 @@ describe("P1 の完了条件（14章）：雛形の会社・本物の daemon と
       // 5.4.1 の2：本物を渡す唯一の例外
       expect(call?.env.CLAUDE_CODE_OAUTH_TOKEN).toBe(secrets.anthropic);
       expect(call?.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC).toBe("1");
+      // 箱の中の claude は root で動くので、--dangerously-skip-permissions を通すために要る
+      expect(call?.env.IS_SANDBOX).toBe("1");
       // 本物の GitHub トークンは、ドライバーが仮の札にする secrets にだけある（宛先は github のサービスの hosts）
       expect(spec.secrets).toEqual([
         { env: "GITHUB_TOKEN", hosts: ["api.github.com", "github.com"], value: secrets.github },

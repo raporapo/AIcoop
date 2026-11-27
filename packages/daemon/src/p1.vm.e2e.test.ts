@@ -458,6 +458,7 @@ describe.skipIf(!ENABLED)(
         // 5.4.1 の2：Claude のログインのトークンだけは、例外として claude の実行に本物を渡す
         expect(env).toContain(`CLAUDE_CODE_OAUTH_TOKEN=${secrets.anthropic}`);
         expect(env).toMatch(/^CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1$/m);
+        expect(env).toMatch(/^IS_SANDBOX=1$/m);
         expect(env).toMatch(/^HOME=\/home\/agent$/m);
         // 仮の札は実行ごとに作り直す（5.1.3 の2）
       }
@@ -726,7 +727,8 @@ describe.skipIf(!ENABLED)(
       expect(run?.session_id).toBe(init?.session_id);
       expect(init?.cwd).toBe("/work");
       expect(init?.mcp_servers).toEqual([{ name: "aicoop", status: "connected" }]);
-      const mcpTools = (init?.tools as string[]).filter((t) => t.startsWith("mcp__"));
+      const tools = Array.isArray(init?.tools) ? (init.tools as string[]) : [];
+      const mcpTools = tools.filter((t) => t.startsWith("mcp__"));
       expect(mcpTools).toEqual(["mcp__aicoop__report_result"]);
       // ログインできずに終わるので、報告はない
       expect(realClaude.task.status).toBe("failed");
