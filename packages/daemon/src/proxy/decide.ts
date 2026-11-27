@@ -12,8 +12,11 @@
  *    hold → リクエストを `state/holds/<hold_id>.bin` に保存し、保留を作って 428（5.2.5、5.2.6 の1）
  *
  * 加えて、拒否側に倒す決まり：
+ * - 実行が動いていない（Claude Code の起動前・終了後。箱を壊せずに残ったときも）ときは、何も送らない
+ *   （403、監査ログの理由は `run_not_active`）。仮の札を無効にする（5.1.3 の2）のを、箱のドライバーに頼らない
  * - ポートは、そのプロトコルの既定（https は 443、http は 80）だけ。ほかは、どの操作にも当てない
  * - 資格を使うサービスへの http（暗号なし）は、どの操作にも当てない（本物の資格を平文で流さない）
+ * - 監査ログのパスと保留の URL の中の仮の札は伏せ字にし、仮の札の入ったヘッダーは保留に保存しない（11.5）
  */
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import {
@@ -35,6 +38,7 @@ import { activeGrantsFor } from "../db/grants.ts";
 import { createHold } from "../db/holds.ts";
 import type { StateDb } from "../db/open.ts";
 import type { AicoopPaths } from "../paths.ts";
+import { containsPlaceholder, maskPlaceholders } from "../run/redact.ts";
 
 /** 保留にできる本文の上限（5.2.6 の1） */
 export const MAX_HOLD_BODY_BYTES = 10 * 1024 * 1024;
@@ -57,6 +61,11 @@ export interface ProxyContext {
   readonly memberId: string;
   /** その実行のスレッド（保留の記録に残す） */
   readonly thread: string;
+  /**
+   * その実行の Claude Code が動いているか。false のあいだは、許可していても何も送らない
+   * （起動前・終了後に箱に残ったプロセスや、壊せずに残った箱から、資格を使わせない）
+   */
+  readonly active: () => boolean;
   readonly logger?: Logger;
   /** 時刻の元。なければ `db.now` */
   readonly now?: () => Date;
@@ -99,6 +108,11 @@ export function createProxyHandler(
           body_bytes: bodyBytes,
         },
       });
+
+    if (!ctx.active()) {
+      audit("deny", null, "run_not_active", req.bodyBytes);
+      return denyResponse(null, "not_allowed");
+    }
 
     if (req.port !== (req.protocol === "https" ? 443 : 80)) {
       audit("deny", null, "no_operation", req.bodyBytes);
@@ -186,9 +200,9 @@ export function createProxyHandler(
   };
 }
 
-/** 監査ログに書くパス：クエリ文字列（と、あればフラグメント）を除き、長すぎれば切る */
+/** 監査ログに書くパス：クエリ文字列（と、あればフラグメント）を除き、仮の札を伏せ、長すぎれば切る */
 function auditPath(path: string): string {
-  const bare = path.split(/[?#]/, 1)[0] ?? "";
+  const bare = maskPlaceholders(path.split(/[?#]/, 1)[0] ?? "");
   return bare.length > MAX_AUDIT_PATH ? `${bare.slice(0, MAX_AUDIT_PATH)}…` : bare;
 }
 
@@ -201,13 +215,17 @@ export interface SavedHoldRequest {
   readonly method: string;
   /** クエリ文字列を含む URL */
   readonly url: string;
-  /** 認証ヘッダー・cookie・その資格のヘッダーを除いたもの（名前は小文字） */
+  /** 認証ヘッダー・cookie・その資格のヘッダー・仮の札の入ったヘッダーを除いたもの（名前は小文字） */
   readonly headers: Readonly<Record<string, string>>;
   readonly body: Uint8Array;
 }
 
 /**
  * 1行目に `{"format","method","url","headers","body_bytes"}` の JSON と改行、そのあとに本文をそのまま置く。
+ * - 認証ヘッダー・cookie・その資格の `header` は保存しない（5.2.6 の1。再送のときに本物を付け直す）
+ * - 仮の札は、どのヘッダーに入っていても置き換わる（C-3）ので、仮の札の入ったヘッダーは名前を問わず保存しない
+ * - URL（クエリ）の中の仮の札は伏せ字にする（クエリでは置き換わらない。11.5）
+ * 本文は、送るものとして保存する（5.2.1 の3：本文の中の仮の札は置き換わらない）
  */
 function encodeHoldFile(
   req: ProxiedRequest,
@@ -218,13 +236,14 @@ function encodeHoldFile(
   for (const [name, value] of Object.entries(req.headers)) {
     const lower = name.toLowerCase();
     if (DROPPED_HEADERS.has(lower) || lower === secretHeader) continue;
+    if (containsPlaceholder(value)) continue;
     headers[lower] = value;
   }
   const host = req.host.includes(":") ? `[${req.host}]` : req.host;
   const head = JSON.stringify({
     format: HOLD_FILE_FORMAT,
     method: req.method,
-    url: `${req.protocol}://${host}${req.path}`,
+    url: maskPlaceholders(`${req.protocol}://${host}${req.path}`),
     headers,
     body_bytes: body.byteLength,
   });

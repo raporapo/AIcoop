@@ -14,7 +14,12 @@ import { type AicoopPaths, aicoopPaths } from "../paths.ts";
 import { type TempDir, tempDir } from "../testing/state-db.ts";
 import { managedSettings, mcpConfig } from "./managed-settings.ts";
 import { GUEST_PATHS, vmMounts } from "./mounts.ts";
-import { prepareRuntimeDir, removeRuntimeDir, writeHomeClaudeFiles } from "./runtime-files.ts";
+import {
+  prepareRuntimeDir,
+  removeRuntimeDir,
+  removeStaleRuntimeDirs,
+  writeHomeClaudeFiles,
+} from "./runtime-files.ts";
 
 let tmp: TempDir;
 let paths: AicoopPaths;
@@ -41,9 +46,9 @@ describe("5.4.4 の1・5.4.3 の1：ホームの .claude/ に CLAUDE.md と空�
 describe("5.1.7・5.3.6・5.3.8：実行ごとのフォルダ runtime/<run_id>/", () => {
   it("etc/mcp.json（道具ゲートだけ）と managed/managed-settings.json を書く", () => {
     const runId = newId("run");
-    prepareRuntimeDir(paths, runId, []);
+    prepareRuntimeDir(paths, runId, [], { gatewayToken: "tok-123" });
     expect(JSON.parse(readFileSync(join(paths.runEtc(runId), "mcp.json"), "utf8"))).toEqual(
-      mcpConfig(),
+      mcpConfig("tok-123"),
     );
     expect(
       JSON.parse(readFileSync(join(paths.runManaged(runId), "managed-settings.json"), "utf8")),
@@ -57,7 +62,7 @@ describe("5.1.7・5.3.6・5.3.8：実行ごとのフォルダ runtime/<run_id>/"
     write(join(paths.skillsDir, "other", "SKILL.md"), "ほかの役職の");
     const runId = newId("run");
 
-    const result = prepareRuntimeDir(paths, runId, ["git-workflow"]);
+    const result = prepareRuntimeDir(paths, runId, ["git-workflow"], { gatewayToken: "t" });
 
     expect(result).toEqual({ copied: ["git-workflow"], missing: [] });
     expect(readdirSync(paths.runSkills(runId))).toEqual(["git-workflow"]);
@@ -78,7 +83,7 @@ describe("5.1.7・5.3.6・5.3.8：実行ごとのフォルダ runtime/<run_id>/"
     }
     const runId = newId("run");
 
-    const result = prepareRuntimeDir(paths, runId, ["s", "missing"]);
+    const result = prepareRuntimeDir(paths, runId, ["s", "missing"], { gatewayToken: "t" });
 
     expect(result).toEqual({ copied: ["s"], missing: ["missing"] });
     expect(readdirSync(join(paths.runSkills(runId), "s"))).toEqual(["SKILL.md"]);
@@ -86,11 +91,30 @@ describe("5.1.7・5.3.6・5.3.8：実行ごとのフォルダ runtime/<run_id>/"
 
   it("実行の終わりに消す", () => {
     const runId = newId("run");
-    prepareRuntimeDir(paths, runId, []);
+    prepareRuntimeDir(paths, runId, [], { gatewayToken: "t" });
     removeRuntimeDir(paths, runId);
     expect(existsSync(paths.runDir(runId))).toBe(false);
     // 何度呼んでもよい
     removeRuntimeDir(paths, runId);
+  });
+});
+
+describe("6.1・8.6：制御サーバーが落ちて残った runtime/<run_id>/ を、起動のときに消す", () => {
+  it("実行のフォルダ（r_...）だけを消し、ほかのもの（daemon.json・api_token など）は触らない", () => {
+    const a = newId("run");
+    const b = newId("run");
+    prepareRuntimeDir(paths, a, [], { gatewayToken: "t" });
+    prepareRuntimeDir(paths, b, [], { gatewayToken: "t" });
+    write(join(paths.runtimeDir, "daemon.json"), "{}");
+    write(join(paths.runtimeDir, "api_token"), "x");
+    write(join(paths.runtimeDir, "notes", "keep"), "x");
+
+    expect(removeStaleRuntimeDirs(paths).sort()).toEqual([a, b].sort());
+    expect(readdirSync(paths.runtimeDir).sort()).toEqual(["api_token", "daemon.json", "notes"]);
+  });
+
+  it("runtime/ がなくてもよい", () => {
+    expect(removeStaleRuntimeDirs(paths)).toEqual([]);
   });
 });
 

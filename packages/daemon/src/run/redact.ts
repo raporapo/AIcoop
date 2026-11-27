@@ -15,6 +15,16 @@ export const PLACEHOLDER_MASK = "GONDOLIN_SECRET_****";
 
 const PLACEHOLDER = /GONDOLIN_SECRET_[0-9A-Za-z]+/g;
 
+/** 仮の札だけを伏せ字にする（本物の資格の値を知らない場所：監査ログのパス、保留の URL など） */
+export function maskPlaceholders(text: string): string {
+  return text.replace(PLACEHOLDER, PLACEHOLDER_MASK);
+}
+
+/** 仮の札（の一部）を含むか */
+export function containsPlaceholder(text: string): boolean {
+  return text.includes("GONDOLIN_SECRET_");
+}
+
 /** これより短い値は伏せ字にしない（「a」のような値で、行のすべてが伏せ字になるのを防ぐ） */
 const MIN_SECRET_LENGTH = 4;
 
@@ -39,6 +49,6 @@ export function createRedactor(secrets: readonly string[]): Redactor {
     for (const needle of ordered) {
       if (out.includes(needle)) out = out.split(needle).join(SECRET_MASK);
     }
-    return out.replace(PLACEHOLDER, PLACEHOLDER_MASK);
+    return maskPlaceholders(out);
   };
 }

@@ -39,6 +39,7 @@ import { openStateDb, type StateDb } from "../db/open.ts";
 import { recoverAfterRestart } from "../db/restart.ts";
 import { createDaemonLogger, type LineStream, pruneOldLogs } from "../log.ts";
 import { aicoopPaths } from "../paths.ts";
+import { removeStaleRuntimeDirs } from "../run/runtime-files.ts";
 import type { BoxDrivers, RunEnvironment, StartRun } from "../run/types.ts";
 import { createTaskScheduler, type TaskScheduler } from "../scheduler/scheduler.ts";
 import { systemTimers, type TimerHandle, type Timers } from "../timers.ts";
@@ -229,6 +230,11 @@ export async function startDaemon(options: StartDaemonOptions): Promise<DaemonHa
         { failed: recovery.failed, requeued: recovery.requeued, ended_runs: recovery.endedRuns },
         "前回の制御サーバーが止まったときに動いていたタスクを片付けました（8.6）",
       );
+    }
+    // 前の制御サーバーが落ちて残した runtime/<run_id>/（mcp.json のゲートのトークンなど）を消す
+    const staleRuns = removeStaleRuntimeDirs(paths);
+    if (staleRuns.length > 0) {
+      logger.warn({ runs: staleRuns }, "残っていた実行のフォルダ（runtime/<run_id>/）を消しました");
     }
 
     const maintenance = () => {

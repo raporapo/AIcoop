@@ -262,7 +262,13 @@ describe("5.4.3・5.3.8・5.1.7：箱の中から見えるファイル", () => {
     expect(seen.claudeMd).toContain("mcp__aicoop__report_result");
     expect(JSON.parse(seen.settings ?? "")).toEqual({});
     expect(JSON.parse(seen.mcp ?? "")).toEqual({
-      mcpServers: { aicoop: { type: "http", url: "http://aicoop.internal/mcp" } },
+      mcpServers: {
+        aicoop: {
+          type: "http",
+          url: "http://aicoop.internal/mcp",
+          headers: { Authorization: expect.stringMatching(/^Bearer [A-Za-z0-9_-]{43}$/) },
+        },
+      },
     });
     expect(JSON.parse(seen.managed ?? "")).toMatchObject({
       allowManagedMcpServersOnly: true,
@@ -373,6 +379,99 @@ describe("5.3.1 の受け入れ条件：箱の中の Claude Code に見える道
       return 0;
     });
     expect(tools).toEqual(["report_result"]);
+  });
+});
+
+describe("P-1・5.3.1：道具ゲートは、その実行のトークンを持つ者だけが呼べる", () => {
+  it("トークンは mcp.json の headers でだけ渡す。トークンのない呼び出しは 401。実行の記録では伏せ字", async () => {
+    let token = "";
+    let unauthenticated = 0;
+    const { outcome, task } = await runOnce(async (claude) => {
+      const mcp = JSON.parse(readFileSync(claude.hostPath("/etc/aicoop/mcp.json"), "utf8"));
+      token = String(mcp.mcpServers.aicoop.headers.Authorization).replace(/^Bearer /, "");
+      // ホストのほかのプロセスが、トークンなしで report_result を呼ぶ
+      const res = await fetch(`http://127.0.0.1:${claude.spec.network.gatewayPort}/mcp`, {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "report_result", arguments: { summary: "偽の報告" } },
+        }),
+      });
+      unauthenticated = res.status;
+      // 箱の中の AI がトークンを表示しても、実行の記録には残さない
+      claude.emit(fakeEvents.text(`mcp.json: ${JSON.stringify(mcp)}`));
+      await claude.reportResult("本物の報告");
+      return 0;
+    });
+    expect(unauthenticated).toBe(401);
+    expect(outcome.status).toBe("done");
+    expect(task?.resultSummary).toBe("本物の報告");
+    expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    const log = readFileSync(t.paths.runLog(outcome.runId as string), "utf8");
+    expect(log).toContain("mcp.json");
+    expect(log).not.toContain(token);
+    expect(t.logs.join("\n")).not.toContain(token);
+  });
+});
+
+describe("P-1・5.1.3 の2：Claude Code が終わったあとの箱からは、何も届かない", () => {
+  it("箱に残ったプロセス・壊せずに残った箱からの通信は forward せず、report_result も記録しない", async () => {
+    const late: { push?: unknown; report?: boolean; afterRun?: unknown } = {};
+    let box: import("../testing/fake-box.ts").FakeBox | undefined;
+    let claudeCtx: import("../testing/fake-box.ts").FakeClaudeContext | undefined;
+    const { outcome, task } = await runOnce(async (claude) => {
+      claudeCtx = claude;
+      box = claude.box;
+      // 実行の途中では、許可した push は forward
+      const during = await claude.request({
+        method: "POST",
+        host: "github.com",
+        path: "/myorg/app.git/git-receive-pack",
+        body: "PACK",
+      });
+      if (during.action !== "forward") throw new Error("実行中の push が forward でない");
+      // Claude Code は報告せずに終わる。箱を壊す前に、残ったプロセスが動く
+      claude.box.destroy = async () => {
+        const c = claudeCtx as NonNullable<typeof claudeCtx>;
+        late.push = await c.request({
+          method: "POST",
+          host: "github.com",
+          path: "/myorg/app.git/git-receive-pack",
+          body: "PACK",
+        });
+        late.report = (await c.reportResult("残ったプロセスの偽の報告")).isError === true;
+        throw new Error("箱を壊せませんでした");
+      };
+      return 1;
+    });
+
+    expect(late.push).toMatchObject({ action: "respond", status: 403 });
+    expect(late.report).toBe(true);
+    expect(outcome.status).toBe("failed");
+    expect(task?.resultSummary).toBeNull();
+
+    // 実行が終わったあとも、壊せずに残った箱からは届かない
+    const after = await box?.spec.network.onRequest({
+      method: "POST",
+      protocol: "https",
+      host: "github.com",
+      port: 443,
+      path: "/myorg/app.git/git-receive-pack",
+      headers: {},
+      bodyBytes: 4,
+      readBody: async () => new TextEncoder().encode("PACK"),
+    });
+    expect(after).toMatchObject({ action: "respond", status: 403 });
+    expect(
+      auditKinds("proxy.decision").map((r) => [r.data.decision, r.data.reason ?? null]),
+    ).toEqual([
+      ["allow", null],
+      ["deny", "run_not_active"],
+      ["deny", "run_not_active"],
+    ]);
   });
 });
 
@@ -561,6 +660,102 @@ describe("5.4.5：セッションとスレッド（--resume）", () => {
       thread: "x",
     });
     expect(getSession(t.db, "dev-implementer", "x")).toBeUndefined();
+  });
+});
+
+describe("5.4.5 の5 の考え方：--resume のセッションが読めないときは、新しいセッションで1回だけやり直す", () => {
+  const thread = { memberId: "dev-implementer", thread: "issue-7" } as const;
+  const missing = "No conversation found with session ID: sess-gone";
+
+  /** --resume を付けたときは、セッションが見つからないと言って失敗する Claude Code */
+  const resumeFails =
+    (how: "stderr" | "result", fresh: FakeClaude): FakeClaude =>
+    async (claude) => {
+      if (!claude.cmd.includes("--resume")) return fresh(claude);
+      if (how === "stderr") claude.emitStderr(missing);
+      else claude.emit(fakeEvents.result({ subtype: "error", is_error: true, result: missing }));
+      return 1;
+    };
+
+  async function previousSession() {
+    await runOnce((claude) => {
+      claude.emit(fakeEvents.init("sess-gone"));
+      return 0;
+    }, thread);
+  }
+
+  it.each(["stderr", "result"] as const)(
+    "No conversation found（%s）なら、--resume なしで1回だけやり直し、新しいセッションを記録する",
+    async (how) => {
+      await previousSession();
+      const { outcome, task } = await runOnce(
+        resumeFails(how, async (claude) => {
+          claude.emit(fakeEvents.init("sess-new"));
+          await claude.reportResult("やり直して終えました");
+          return 0;
+        }),
+        thread,
+      );
+
+      const calls = t.driver.lastBox.execCalls;
+      expect(calls).toHaveLength(2);
+      expect(calls[0]?.cmd.slice(-2)).toEqual(["--resume", "sess-gone"]);
+      expect(calls[1]?.cmd).not.toContain("--resume");
+      expect(outcome.status).toBe("done");
+      expect(task?.resultSummary).toBe("やり直して終えました");
+      expect(getSession(t.db, "dev-implementer", "issue-7")?.sessionId).toBe("sess-new");
+      expect(getRun(t.db, outcome.runId as string)?.sessionId).toBe("sess-new");
+      expect(t.driver.lastBox.destroyed).toBe(1);
+    },
+  );
+
+  it("やり直しも1回だけ。2回とも失敗したら failed", async () => {
+    await previousSession();
+    const { outcome } = await runOnce(
+      resumeFails("stderr", (claude) => {
+        claude.emitStderr(missing);
+        return 1;
+      }),
+      thread,
+    );
+    expect(t.driver.lastBox.execCalls).toHaveLength(2);
+    expect(outcome.status).toBe("failed");
+  });
+
+  it("セッションが見つからない以外の失敗では、やり直さない。error に、再開できなかったかもしれないことと直し方を書く", async () => {
+    await previousSession();
+    const { outcome, task } = await runOnce((claude) => {
+      claude.emitStderr("Error: something else");
+      return 1;
+    }, thread);
+    expect(t.driver.lastBox.execCalls).toHaveLength(1);
+    expect(outcome.status).toBe("failed");
+    expect(task?.error).toContain("前のセッション（--resume sess-gone）から再開できなかった");
+    expect(task?.error).toContain("別のスレッド名");
+  });
+
+  it("--resume を付けていないときは、同じ文言でもやり直さない", async () => {
+    const { outcome } = await runOnce((claude) => {
+      claude.emitStderr(missing);
+      return 1;
+    });
+    expect(t.driver.lastBox.execCalls).toHaveLength(1);
+    expect(outcome.status).toBe("failed");
+  });
+
+  it("やり直しの時間制限は、1回目と合わせてタスクの時間制限の中", async () => {
+    await previousSession();
+    const shortRun = createStartRun({ timeoutMs: () => 300, stopWaitMs: 2000 });
+    t.driver.claude = resumeFails("stderr", async (claude) => {
+      claude.emit(fakeEvents.init("sess-new"));
+      await claude.sleep(30_000);
+      return 0;
+    });
+    const task = t.queueTask(thread);
+    const began = Date.now();
+    const outcome = await start(task.id, shortRun).done;
+    expect(outcome.status).toBe("timeout");
+    expect(Date.now() - began).toBeLessThan(5000);
   });
 });
 

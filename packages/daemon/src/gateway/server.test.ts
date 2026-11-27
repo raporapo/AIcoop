@@ -45,10 +45,12 @@ afterEach(async () => {
   tmp.cleanup();
 });
 
-async function connect(): Promise<Client> {
+async function connect(token: string | null = gateway.token): Promise<Client> {
   const client = new Client({ name: "fake-claude", version: "0.0.0" });
   await client.connect(
-    new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${gateway.port}/mcp`)),
+    new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${gateway.port}/mcp`), {
+      requestInit: token === null ? {} : { headers: { authorization: `Bearer ${token}` } },
+    }),
   );
   return client;
 }
@@ -68,8 +70,12 @@ function errorOf(result: Awaited<ReturnType<typeof call>>): { error: string; mes
   return JSON.parse(content[0]?.text ?? "null");
 }
 
-/** Host ヘッダーを決めて生の HTTP を送る（fetch は Host を変えられない） */
-function rawPost(host: string, path = "/mcp"): Promise<number> {
+/** Host ヘッダー・Authorization を決めて生の HTTP を送る（fetch は Host を変えられない） */
+function rawPost(
+  host: string,
+  path = "/mcp",
+  authorization: string | null = `Bearer ${gateway.token}`,
+): Promise<number> {
   return new Promise((resolve, reject) => {
     const body = JSON.stringify({
       jsonrpc: "2.0",
@@ -89,6 +95,7 @@ function rawPost(host: string, path = "/mcp"): Promise<number> {
         method: "POST",
         headers: {
           host,
+          ...(authorization === null ? {} : { authorization }),
           "content-type": "application/json",
           accept: "application/json, text/event-stream",
           "content-length": Buffer.byteLength(body),
@@ -137,6 +144,42 @@ describe("5.3.1：道具ゲート（MCP、Streamable HTTP）", () => {
 
   it("/mcp 以外のパスは 404", async () => {
     expect(await rawPost("aicoop.internal", "/other")).toBe(404);
+  });
+
+  it("P-1・5.3.1 の1：その実行のトークン（Authorization: Bearer）がなければ 401。ホストのほかのプロセスからは呼べない", async () => {
+    expect(await rawPost("aicoop.internal", "/mcp", null)).toBe(401);
+    expect(await rawPost(`127.0.0.1:${gateway.port}`, "/mcp", null)).toBe(401);
+    expect(await rawPost("aicoop.internal", "/mcp", "Bearer wrong-token")).toBe(401);
+    expect(await rawPost("aicoop.internal", "/mcp", `Bearer ${gateway.token}x`)).toBe(401);
+    expect(await rawPost("aicoop.internal", "/mcp", `Basic ${gateway.token}`)).toBe(401);
+    expect(await rawPost("aicoop.internal", "/mcp", gateway.token)).toBe(401);
+    // パスを知る前に止める（/mcp 以外も 401）
+    expect(await rawPost("aicoop.internal", "/other", null)).toBe(401);
+    await expect(connect(null)).rejects.toThrow();
+    expect(await rawPost("aicoop.internal")).toBe(200);
+  });
+
+  it("トークンは実行（ゲート）ごとに別のランダムな値で、ほかの実行のゲートには効かない", async () => {
+    const other = await openGateway({
+      db,
+      memberId: "dev-reviewer",
+      taskId: newId("task"),
+      workDir: work,
+      onReport: () => {},
+    });
+    try {
+      expect(other.token).not.toBe(gateway.token);
+      expect(gateway.token).toMatch(/^[A-Za-z0-9_-]{43,}$/);
+      await expect(
+        new Client({ name: "x", version: "0" }).connect(
+          new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${other.port}/mcp`), {
+            requestInit: { headers: { authorization: `Bearer ${gateway.token}` } },
+          }),
+        ),
+      ).rejects.toThrow();
+    } finally {
+      await other.close();
+    }
   });
 
   it("閉じたら、もうつながらない（実行が終わったらポートを閉じる）", async () => {

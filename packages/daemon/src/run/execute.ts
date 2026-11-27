@@ -150,6 +150,11 @@ class RunExecution {
   #log: Logger;
 
   #phase: Phase = "queued";
+  /**
+   * Claude Code が箱の中で動いているあいだだけ true。資格プロキシ（forward）と report_result は
+   * このあいだだけ受け付ける（起動前・終了後に箱に残ったプロセスや、壊せずに残った箱から使わせない）
+   */
+  #claudeActive = false;
   #cancel: CancelReason | null = null;
   #timedOut = false;
   #onStop: (() => void) | null = null;
@@ -162,6 +167,12 @@ class RunExecution {
   #endReason: RunEndReason = "exited";
   #logPath: string | null = null;
   #sessionSaved = false;
+  /** --resume に渡したセッションID（やり直したら null） */
+  #resumed: string | null = null;
+  /** Claude Code が「セッションが見つからない」と言った（5.4.5 の5 の考え方でやり直す） */
+  #sawSessionNotFound = false;
+  /** 時間制限の締め切り（Date.now() の値。最初に Claude Code を起動するときに決める） */
+  #deadline: number | null = null;
   #lastRateLimit: Extract<ReturnType<typeof parseStreamLine>, { kind: "rate_limit" }> | null = null;
   #lastResult: Extract<ReturnType<typeof parseStreamLine>, { kind: "result" }> | null = null;
 
@@ -278,6 +289,7 @@ class RunExecution {
       logger: this.#log,
     });
     const resume = this.#resumeSessionId();
+    this.#resumed = resume;
     const run = createRun(db, {
       taskId: this.#task.id,
       groupId: this.#groupId,
@@ -314,7 +326,8 @@ class RunExecution {
       now: this.#now(),
     });
     const prepared = await this.#prepareSecrets(effective);
-    this.#redact = createRedactor([anthropic.token, ...prepared.realValues]);
+    // 道具ゲートのトークンは本物の資格ではないが、ホストのほかのプロセスに知られないようログでは伏せる
+    this.#redact = createRedactor([anthropic.token, ...prepared.realValues, this.#gateway.token]);
     for (const service of prepared.missing) {
       this.#log.warn({ service }, `資格 ${service} が登録されていないので、箱に渡しません`);
     }
@@ -332,7 +345,9 @@ class RunExecution {
       this.#env.paths.memberHome(member.id),
       buildClaudeMd({ ...prompts, toolsAndRules }),
     );
-    const skills = prepareRuntimeDir(this.#env.paths, run.id, member.role.skills);
+    const skills = prepareRuntimeDir(this.#env.paths, run.id, member.role.skills, {
+      gatewayToken: this.#gateway.token,
+    });
     for (const skill of skills.missing) {
       this.#log.warn({ skill }, `スキル ${skill} が ~/.aicoop/skills/ にないので、渡しません`);
     }
@@ -366,6 +381,7 @@ class RunExecution {
           thread: this.#task.thread,
           logger: this.#log,
           now: this.#now,
+          active: () => this.#claudeActive,
         }),
       },
     };
@@ -395,20 +411,53 @@ class RunExecution {
     this.#checkStop();
 
     // 5.4.2：claude -p を起動する
-    const argv = claudeArgv({
-      prompt: buildTaskPrompt({
-        purpose: this.#task.purpose,
-        doneWhen: this.#task.doneWhen,
-        replyAs: this.#task.replyAs,
-        context: this.#task.context,
-        contextUntrusted: this.#task.contextUntrusted,
-      }),
-      model: member.role.model,
-      maxTurns: member.role.max_turns,
-      resume,
+    const prompt = buildTaskPrompt({
+      purpose: this.#task.purpose,
+      doneWhen: this.#task.doneWhen,
+      replyAs: this.#task.replyAs,
+      context: this.#task.context,
+      contextUntrusted: this.#task.contextUntrusted,
     });
-    await this.#runClaude(this.#box, argv, claudeExecEnv(anthropic.token));
+    const argv = (session: string | null) =>
+      claudeArgv({
+        prompt,
+        model: member.role.model,
+        maxTurns: member.role.max_turns,
+        resume: session,
+      });
+    const execEnv = claudeExecEnv(anthropic.token);
+    await this.#runClaude(this.#box, argv(resume), execEnv);
+    // 5.4.5 の5 の考え方：前のセッションのファイルが無い・読めないなら、新しいセッションで1回だけやり直す
+    if (resume !== null && this.#resumeMissing()) {
+      this.#log.warn(
+        "前のセッションから再開できなかったので、新しいセッションで1回だけやり直します",
+      );
+      this.#resetAttempt();
+      this.#resumed = null;
+      await this.#runClaude(this.#box, argv(null), execEnv);
+    }
     return this.#decide();
+  }
+
+  /** --resume のセッションが見つからずに、Claude Code が何もせずに終わったか */
+  #resumeMissing(): boolean {
+    return (
+      this.#sawSessionNotFound &&
+      !this.#sessionSaved &&
+      !this.#reported &&
+      this.#cancel === null &&
+      !this.#timedOut &&
+      this.#exitCode !== 0
+    );
+  }
+
+  /** やり直す前に、1回目の結果を忘れる（時間制限は1回目と合わせて数える） */
+  #resetAttempt(): void {
+    this.#exitCode = null;
+    this.#endReason = "exited";
+    this.#lastResult = null;
+    this.#lastRateLimit = null;
+    this.#sawSessionNotFound = false;
   }
 
   /** Claude Code を動かし、終わる（か、止める）まで待つ */
@@ -417,9 +466,11 @@ class RunExecution {
     if (this.#logPath !== null) appendFileSync(this.#logPath, "", { mode: 0o600 });
 
     let handle: ReturnType<Box["exec"]>;
+    this.#claudeActive = true;
     try {
       handle = box.exec(argv, { cwd: GUEST_PATHS.work, env });
     } catch (error) {
+      this.#claudeActive = false;
       throw new RunFailure(
         this.#redact(`Claude Code を起動できませんでした（${shortMessage(error)}）`),
       );
@@ -437,7 +488,10 @@ class RunExecution {
       this.#onStop = () => resolve({ kind: "stop" });
       if (this.#cancel !== null) resolve({ kind: "stop" });
     });
-    const timeoutMs = this.#options.timeoutMs?.(this.#task) ?? this.#task.timeoutMinutes * 60_000;
+    // やり直しも、1回目と合わせてタスクの時間制限の中で（5.5.5）
+    this.#deadline ??=
+      Date.now() + (this.#options.timeoutMs?.(this.#task) ?? this.#task.timeoutMinutes * 60_000);
+    const timeoutMs = Math.max(0, this.#deadline - Date.now());
     const timer = setTimeout(() => {
       this.#timedOut = true;
       this.#onStop?.();
@@ -445,6 +499,8 @@ class RunExecution {
 
     try {
       const first = await Promise.race([exited, stopped]);
+      // 終わった・止めると決めたら、もう通信と報告を受け付けない
+      this.#claudeActive = false;
       if (first.kind === "stop") {
         this.#log.info({ reason: this.#cancel ?? "timeout" }, "Claude Code を止めます");
         await box.kill().catch((error: unknown) => {
@@ -462,6 +518,7 @@ class RunExecution {
         );
       }
     } finally {
+      this.#claudeActive = false;
       clearTimeout(timer);
       this.#onStop = null;
     }
@@ -477,7 +534,7 @@ class RunExecution {
     const limited = this.#usageLimit();
     if (limited !== null) return limited;
     if (this.#exitCode === 0) return { status: "done_without_report" };
-    return { status: "failed", error: this.#failureReason() };
+    return { status: "failed", error: this.#failureReason() + this.#resumeHint() };
   }
 
   /** 5.4.6 の2：利用枠のために止まったなら waiting_limit */
@@ -527,9 +584,16 @@ class RunExecution {
     return detail === "" ? head : `${head}（${detail}）`;
   }
 
+  /** --resume を付けて、セッションが始まらずに失敗したときの手がかり */
+  #resumeHint(): string {
+    if (this.#resumed === null || this.#sessionSaved) return "";
+    return `。前のセッション（--resume ${this.#resumed}）から再開できなかったのかもしれません（セッションのファイルが消えた・壊れたなど）。続けて失敗するときは、別のスレッド名で頼み直すと新しいセッションで始まります`;
+  }
+
   // ---- stream-json ----
 
   #onLine(stream: "stdout" | "stderr", raw: string): void {
+    if (this.#resumed !== null && SESSION_NOT_FOUND.test(raw)) this.#sawSessionNotFound = true;
     const redacted = this.#redact(raw);
     let record: string;
     if (stream === "stderr") {
@@ -586,7 +650,12 @@ class RunExecution {
 
   /** 5.5.6 の1：report_result を記録する（2回目以降は、あとのもので上書きする） */
   #onReport(result: ReportResult): void {
-    if (this.#phase !== "running" || this.#cancel !== null || this.#timedOut) {
+    if (
+      this.#phase !== "running" ||
+      !this.#claudeActive ||
+      this.#cancel !== null ||
+      this.#timedOut
+    ) {
       throw new ReportRejectedError("このタスクはもう動いていないので、結果を記録できません");
     }
     try {
@@ -762,6 +831,12 @@ class RunExecution {
     };
   }
 }
+
+/**
+ * `--resume` のセッションが無いときの Claude Code の文言（公式ドキュメントのセッションの節）。
+ * 箱の中から来る文字列だが、偽っても新しいセッションで1回やり直すだけ
+ */
+const SESSION_NOT_FOUND = /No conversation found with session ID/i;
 
 /** 未登録の資格を「使える道具とルール」に書き足す */
 function missingSecretsNote(missing: readonly string[]): string {
