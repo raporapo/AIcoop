@@ -26,7 +26,7 @@ import {
 } from "@aicoop/box-gondolin";
 import type { Box, BoxDriver, BoxSpec } from "@aicoop/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type { DaemonInfo, GetTaskResponse, StatusResponse } from "./api/contract.ts";
+import type { GetTaskResponse, StatusResponse } from "./api/contract.ts";
 import { type DaemonHandle, startDaemon } from "./daemon/start.ts";
 import { verifyAuditLog } from "./db/audit.ts";
 import { openStateDb, type StateDb } from "./db/open.ts";
@@ -34,7 +34,6 @@ import { type AicoopPaths, aicoopPaths } from "./paths.ts";
 import { startRun } from "./run/execute.ts";
 import { mcpConfig } from "./run/managed-settings.ts";
 import type { TestCompany } from "./testing/company.ts";
-import { apiRequest } from "./testing/http.ts";
 import { manualClock } from "./testing/manual-clock.ts";
 import {
   type Api,
@@ -46,11 +45,13 @@ import {
   E2E_ORG,
   E2E_OTHER_OWNER,
   type E2eSecrets,
+  e2eApi,
   findLeaks,
   listFilesRecursive,
   registerE2eSecrets,
   waitForTask,
   waitForTaskEnd,
+  waitUntil,
 } from "./testing/p1-e2e.ts";
 import { type TempDir, tempDir } from "./testing/state-db.ts";
 
@@ -100,23 +101,41 @@ interface RecordedBox {
     readonly env: Readonly<Record<string, string>>;
   }[];
   destroyed: number;
+  killed: number;
+  /** create を呼ばれた時刻・箱が起きた時刻・claude の exec を呼ばれた時刻（11.2） */
+  readonly createdAt: number;
+  startedAt: number | null;
+  execAt: number | null;
 }
 
-/** 渡された BoxSpec・exec・destroy を記録するだけの包み（中身は本物のドライバーのまま） */
+/** 渡された BoxSpec・exec・kill・destroy を記録するだけの包み（中身は本物のドライバーのまま） */
 function recordingDriver(inner: BoxDriver): { driver: BoxDriver; boxes: RecordedBox[] } {
   const boxes: RecordedBox[] = [];
   const driver: BoxDriver = {
     kind: inner.kind,
     async create(spec) {
-      const record: RecordedBox = { spec, execs: [], destroyed: 0 };
+      const record: RecordedBox = {
+        spec,
+        execs: [],
+        destroyed: 0,
+        killed: 0,
+        createdAt: Date.now(),
+        startedAt: null,
+        execAt: null,
+      };
       boxes.push(record);
       const box = await inner.create(spec);
+      record.startedAt = Date.now();
       const wrapped: Box = {
         exec(cmd, opts) {
+          record.execAt ??= Date.now();
           record.execs.push({ cmd: [...cmd], cwd: opts.cwd, env: { ...(opts.env ?? {}) } });
           return box.exec(cmd, opts);
         },
-        kill: () => box.kill(),
+        async kill() {
+          record.killed += 1;
+          await box.kill();
+        },
         async destroy() {
           record.destroyed += 1;
           await box.destroy();
@@ -210,8 +229,41 @@ describe.skipIf(!ENABLED)(
     const qemuAfter: Record<string, string[]> = {};
     let manualBox: BoxReport;
     let cronBox: BoxReport;
+    /** 取り消したタスク（POST /tasks/{id}/cancel）と、時間切れになったタスク（5.5.5） */
+    let cancelled: GetTaskResponse;
+    let cancelResponse: { status: number; wasActive: boolean };
+    let timedOut: GetTaskResponse;
     let db: StateDb | undefined;
     let audit: AuditRow[] = [];
+
+    /** 偽の claude が眠るタスク（本文の AICOOP_E2E_SLEEP）を作り、眠り始めるまで待つ */
+    const startSleepingTask = async (timeoutMinutes?: number): Promise<string> => {
+      const created = await api({
+        method: "POST",
+        path: "/tasks",
+        body: {
+          member: "dev-implementer",
+          purpose: "止められるまで動き続ける（AICOOP_E2E_SLEEP）",
+          done_when: "止められた",
+          ...(timeoutMinutes === undefined ? {} : { timeout_minutes: timeoutMinutes }),
+        },
+      });
+      expect(created.status).toBe(201);
+      const taskId = created.json.task.id as string;
+      await waitUntil(
+        "偽の claude が眠り始めること",
+        async () => {
+          const view = (await api({ path: `/tasks/${taskId}` })).json as GetTaskResponse;
+          const sid = view.runs[0]?.session_id;
+          return sid != null && existsSync(join(paths.groupWork("dev"), "e2e", sid, "sleeping"))
+            ? true
+            : undefined;
+        },
+        RUN_TIMEOUT_MS,
+        200,
+      );
+      return taskId;
+    };
 
     const scenario = async () => {
       dir = tempDir();
@@ -249,9 +301,7 @@ describe.skipIf(!ENABLED)(
         now: clock.now,
         timers: clock,
       });
-      const info = JSON.parse(readFileSync(paths.daemonInfo, "utf8")) as DaemonInfo;
-      token = readFileSync(paths.apiToken, "utf8").trim();
-      api = (req) => apiRequest(info.port, { token, timeoutMs: 10_000, ...req });
+      ({ api, token } = e2eApi(paths));
 
       // 手動のタスク
       const runStarted = Date.now();
@@ -287,6 +337,36 @@ describe.skipIf(!ENABLED)(
       }
       cronBox = boxReport(paths.groupWork("dev"), cron.runs[0]?.session_id ?? "（なし）");
 
+      // 取り消し（aicoop cancel と同じ API）：動いている claude を止め、箱を壊す
+      const toCancel = await startSleepingTask();
+      // 応答は、claude を止めて箱を壊し終えてから返る
+      const cancelStarted = Date.now();
+      const res = await api({
+        method: "POST",
+        path: `/tasks/${toCancel}/cancel`,
+        timeoutMs: 120_000,
+      });
+      cancelResponse = { status: res.status, wasActive: res.json?.was_active === true };
+      console.log(`[9.2] POST /tasks/{id}/cancel の応答まで ${Date.now() - cancelStarted} ms`);
+      cancelled = await waitForTaskEnd(api, toCancel, RUN_TIMEOUT_MS);
+      for (const run of cancelled.runs) {
+        runDirLeft[run.id] = existsSync(paths.runDir(run.id));
+        qemuAfter[run.id] = await qemuLeftAfterRun();
+      }
+      console.log(`[9.2] 取り消したタスク：${cancelled.task.status}`);
+
+      // 時間切れ（5.5.5）：timeout_minutes の最小の 1 分で
+      const timeoutStarted = Date.now();
+      const toTimeOut = await startSleepingTask(1);
+      timedOut = await waitForTaskEnd(api, toTimeOut, RUN_TIMEOUT_MS);
+      for (const run of timedOut.runs) {
+        runDirLeft[run.id] = existsSync(paths.runDir(run.id));
+        qemuAfter[run.id] = await qemuLeftAfterRun();
+      }
+      console.log(
+        `[5.5.5] 時間切れのタスク：${timedOut.task.status}（${Date.now() - timeoutStarted} ms）`,
+      );
+
       expect((await api({ method: "POST", path: "/shutdown" })).status).toBe(200);
       await daemon.stopped;
       db = openStateDb(paths.stateDb);
@@ -314,7 +394,8 @@ describe.skipIf(!ENABLED)(
         console.log(`[診断] cron: ${JSON.stringify(cron)}`);
         dumpLogs(paths);
       }
-      expect(recorded.boxes).toHaveLength(2);
+      // 手動・cron・取り消し・時間切れの4つ
+      expect(recorded.boxes).toHaveLength(4);
       expect(manual.task.status).toBe("done");
       expect(cron.task.status).toBe("done");
       for (const box of [manualBox, cronBox]) {
@@ -516,7 +597,9 @@ describe.skipIf(!ENABLED)(
 
     it("11.5：logs/ の下のどのファイルにも、本物の資格（と仮の札）が出ていない。箱の中から出力されたものは伏せ字になる", () => {
       const files = listFilesRecursive(paths.logsDir);
-      const runLogs = [...manual.runs, ...cron.runs].map((r) => paths.runLog(r.id));
+      const runLogs = [...manual.runs, ...cron.runs, ...cancelled.runs, ...timedOut.runs].map((r) =>
+        paths.runLog(r.id),
+      );
       expect(files).toEqual(expect.arrayContaining(runLogs));
       const placeholders = [manualBox, cronBox].map(
         (box) => /^GITHUB_TOKEN=(.*)$/m.exec(box.read("env"))?.[1] ?? "",
@@ -530,8 +613,9 @@ describe.skipIf(!ENABLED)(
           api_token: token,
         }),
       ).toEqual([]);
-      for (const log of runLogs) {
-        const text = readFileSync(log, "utf8");
+      // 偽の claude が値を出力した実行（手動・cron）の記録では、伏せ字になっている
+      for (const run of [...manual.runs, ...cron.runs]) {
+        const text = readFileSync(paths.runLog(run.id), "utf8");
         expect(text).toContain("CLAUDE_CODE_OAUTH_TOKEN=****");
         expect(text).toContain("GITHUB_TOKEN=GONDOLIN_SECRET_****");
       }
@@ -539,6 +623,56 @@ describe.skipIf(!ENABLED)(
       expect(JSON.stringify(audit)).not.toContain(secrets.anthropic);
       console.log(
         `[11.5] logs/ の ${files.length} ファイルに、本物の資格・仮の札は出ていない（箱の中から出力したものは伏せ字）`,
+      );
+    });
+
+    it("9.2・5.5.5：動いているタスクを取り消すと、箱の中の claude が止まり、箱が壊されて cancelled になる", () => {
+      expect(cancelResponse).toEqual({ status: 200, wasActive: true });
+      const run = cancelled.runs[0];
+      expect(cancelled.task.status).toBe("cancelled");
+      expect(run).toMatchObject({ end_reason: "killed" });
+      expect([137, 143]).toContain(run?.exit_code);
+      const box = recorded.boxes[2];
+      expect(box?.killed).toBeGreaterThanOrEqual(1);
+      expect(box?.destroyed).toBe(1);
+      expect(qemuAfter[run?.id as string]).toEqual([]);
+      expect(runDirLeft[run?.id as string]).toBe(false);
+      const report = boxReport(paths.groupWork("dev"), run?.session_id as string);
+      expect(existsSync(join(report.dir, "not-stopped"))).toBe(false);
+      console.log(
+        `[9.2] 取り消すと claude が止まり（終了コード ${run?.exit_code}）、箱が壊されて cancelled になった`,
+      );
+    });
+
+    it("5.5.5：時間切れになると、箱の中の claude を止めて timeout にする。箱は壊され、セッションは残る", () => {
+      const run = timedOut.runs[0];
+      expect(timedOut.task).toMatchObject({ status: "timeout", timeout_minutes: 1 });
+      expect(run).toMatchObject({ end_reason: "timeout" });
+      expect([137, 143]).toContain(run?.exit_code);
+      const box = recorded.boxes[3];
+      expect(box?.killed).toBeGreaterThanOrEqual(1);
+      expect(box?.destroyed).toBe(1);
+      expect(qemuAfter[run?.id as string]).toEqual([]);
+      expect(runDirLeft[run?.id as string]).toBe(false);
+      // 5.5.5 の2：セッションは残す（同じスレッドで続きを頼める）
+      expect(run?.session_id).toMatch(/^e2e-/);
+      const report = boxReport(paths.groupWork("dev"), run?.session_id as string);
+      expect(existsSync(join(report.dir, "not-stopped"))).toBe(false);
+      console.log(
+        `[5.5.5] 時間切れ（1分）で claude が止まり（終了コード ${run?.exit_code}）、箱が壊されて timeout になった`,
+      );
+    });
+
+    it("11.2：vm の箱を起こしてから、Claude Code（偽物）を起動するまでの時間を測る（目標 10 秒以内）", () => {
+      const times = recorded.boxes.map((b) => ({
+        boot: (b.startedAt ?? Number.NaN) - b.createdAt,
+        toExec: (b.execAt ?? Number.NaN) - b.createdAt,
+      }));
+      for (const t of times) {
+        expect(Number.isFinite(t.toExec)).toBe(true);
+      }
+      console.log(
+        `[11.2] 箱の起動にかかった時間（ms）：${times.map((t) => t.boot).join("・")}。claude の起動まで（ms）：${times.map((t) => t.toExec).join("・")}`,
       );
     });
   },

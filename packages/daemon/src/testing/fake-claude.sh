@@ -6,6 +6,7 @@
 #   3. curl で、資格プロキシ（github.com・api.github.com・許可していないホスト）と、
 #      道具ゲート（http://aicoop.internal/mcp。MCP の JSON-RPC をセッションなしで1つずつ）に送り、応答を書く
 #   4. report_result で報告し、stream-json の result の行を出して 0 で終わる
+# タスク本文に AICOOP_E2E_SLEEP があれば、2 のあと止められるまで眠る（時間切れ・取り消しの確かめ）。
 # @E2E_ORG@・@E2E_OTHER_OWNER@ は、テストが箱のイメージに入れる前に置き換える。
 set -u
 
@@ -19,6 +20,16 @@ printf '{"type":"system","subtype":"init","cwd":"%s","session_id":"%s","tools":[
 printf '%s\0' "$@" > "$out/argv"
 pwd > "$out/cwd"
 env > "$out/env"
+
+# タスク本文（-p の次の引数）に AICOOP_E2E_SLEEP があれば、止められるまで動き続ける（時間切れ・取り消しの確かめ）
+case "${2:-}" in
+  *AICOOP_E2E_SLEEP*)
+    echo "$$" > "$out/sleeping"
+    sleep 600
+    echo "止められなかった" > "$out/not-stopped"
+    exit 0
+    ;;
+esac
 for f in /proc/[0-9]*/environ; do
   tr '\0' '\n' < "$f" 2>/dev/null
   echo

@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { IMAGE_METADATA_FILE, imageDir } from "@aicoop/box-gondolin";
 import type { ProxyDecision } from "@aicoop/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type { DaemonInfo, GetTaskResponse, StatusResponse } from "./api/contract.ts";
+import type { GetTaskResponse, StatusResponse } from "./api/contract.ts";
 import { type DaemonHandle, startDaemon } from "./daemon/start.ts";
 import { verifyAuditLog } from "./db/audit.ts";
 import { openStateDb, type StateDb } from "./db/open.ts";
@@ -36,6 +36,7 @@ import {
   E2E_ORG,
   E2E_OTHER_OWNER,
   type E2eSecrets,
+  e2eApi,
   findLeaks,
   listFilesRecursive,
   registerE2eSecrets,
@@ -189,9 +190,7 @@ describe("P1 の完了条件（14章）：雛形の会社・本物の daemon と
     });
 
     // CLI と同じく、runtime/ のファイルから daemon を見つける
-    const info = JSON.parse(readFileSync(paths.daemonInfo, "utf8")) as DaemonInfo;
-    token = readFileSync(paths.apiToken, "utf8").trim();
-    api = (req) => apiRequest(info.port, { token, ...req });
+    ({ api, token } = e2eApi(paths));
 
     // 手動のタスク（aicoop run と同じ API）
     const created = await api({

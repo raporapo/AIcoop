@@ -13,13 +13,13 @@ import { randomBytes } from "node:crypto";
 import { type Dirent, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { isTerminalTaskStatus, type TaskStatus } from "@aicoop/shared";
-import type { GetTaskResponse, TaskView } from "../api/contract.ts";
+import type { DaemonInfo, GetTaskResponse, TaskView } from "../api/contract.ts";
 import { listAuditLog } from "../db/audit.ts";
 import type { StateDb } from "../db/open.ts";
 import type { AicoopPaths } from "../paths.ts";
 import { setSecret } from "../secrets/store.ts";
 import { createTestCompany, type TestCompany } from "./company.ts";
-import type { TestRequest, TestResponse } from "./http.ts";
+import { apiRequest, type TestRequest, type TestResponse } from "./http.ts";
 
 /** 部署 dev の ceiling の `your-org` を書き換える先（push を許すリポジトリの owner） */
 export const E2E_ORG = "aicoop-e2e-org";
@@ -76,6 +76,27 @@ export function registerE2eSecrets(paths: AicoopPaths): E2eSecrets {
 }
 
 export type Api = (req: TestRequest) => Promise<TestResponse>;
+
+/**
+ * CLI と同じく、`runtime/daemon.json` と `runtime/api_token` から daemon を見つけて、ローカルAPI を呼ぶ。
+ * 応答が来なかったときは、どのリクエストかを書いて投げる（PC が重いときに、どこで止まったかを見るため）。
+ */
+export function e2eApi(paths: AicoopPaths): { api: Api; token: string; port: number } {
+  const info = JSON.parse(readFileSync(paths.daemonInfo, "utf8")) as DaemonInfo;
+  const token = readFileSync(paths.apiToken, "utf8").trim();
+  const api: Api = async (req) => {
+    const started = Date.now();
+    try {
+      return await apiRequest(info.port, { token, timeoutMs: 10_000, ...req });
+    } catch (error) {
+      throw new Error(
+        `${req.method ?? "GET"} ${req.path} に ${Date.now() - started} ms 応答がありません（${String(error)}）`,
+        { cause: error },
+      );
+    }
+  };
+  return { api, token, port: info.port };
+}
 
 /** 条件を満たすまで、本当の時間で待つ */
 export async function waitUntil<T>(
