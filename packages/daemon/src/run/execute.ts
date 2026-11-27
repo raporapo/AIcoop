@@ -77,6 +77,8 @@ export interface StartRunOptions {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
+/** 利用枠の再開予定時刻をこれより先にしない（Claude の枠でいちばん長い、週の枠） */
+const MAX_USAGE_WAIT_MS = 7 * DAY_MS;
 /** 失敗の理由に入れる、Claude Code の結果の文の長さの上限 */
 const MAX_REASON_CHARS = 200;
 
@@ -92,9 +94,11 @@ export function createStartRun(options: StartRunOptions = {}): StartRun {
     const task = getTask(env.db, request.taskId);
     if (task === undefined) throw new TaskNotFoundError(request.taskId);
     const resolved = resolveMember(request.config, task.memberId) ?? null;
-    const groupId = resolved?.group.id ?? task.groupId;
+    // 順番待ちは、タスクの部署（作ったときの社員の部署）で「1つの箱で1人」を数える（5.1.3）。
+    // 社員の部署がそのあと変わっていたら、実行の側が動かさない（#body）
+    const groupId = task.groupId;
     const boxKind: BoxKind =
-      resolved?.group.box ?? request.config.groups[task.groupId]?.box ?? "vm";
+      request.config.groups[task.groupId]?.box ?? resolved?.group.box ?? "vm";
     const startedAt = (env.now ?? env.db.now)().toISOString();
 
     const execution = new RunExecution(env, request.config, task, resolved, groupId, options);
@@ -256,6 +260,13 @@ class RunExecution {
     if (member === null) {
       throw new RunFailure(
         `社員「${this.#task.memberId}」が設定（members.yaml）にいないか、AI の社員ではありません。設定を直して aicoop reload してから、頼み直してください`,
+      );
+    }
+    if (member.group.id !== this.#task.groupId) {
+      // 順番待ちが空いていると見たのはタスクの部署なので、ほかの部署の箱で動かすと、
+      // その部署で2つの実行が同時に動きうる（5.1.3）
+      throw new RunFailure(
+        `社員「${member.id}」の部署が、タスクを作ったとき（${this.#task.groupId}）から ${member.group.id} に変わっています。もう一度頼み直してください`,
       );
     }
     const kind = member.group.box;
@@ -552,8 +563,7 @@ class RunExecution {
       if (text === null) return null;
       resetsAt = text.resetsAt;
     }
-    // 再開予定時刻が分からないときは1時間後とみなす（止まりっぱなしにしない）
-    const resets = resetsAt ?? new Date(this.#now().getTime() + HOUR_MS).toISOString();
+    const resets = this.#boundedResetsAt(resetsAt);
     setUsageState(this.#env.db, {
       status: "rejected",
       resetsAt: resets,
@@ -563,6 +573,17 @@ class RunExecution {
     const retryAt = new Date(Date.parse(resets) + USAGE_RETRY_DELAY_MS).toISOString();
     this.#log.warn({ resetsAt: resets }, "利用枠の上限で止まりました");
     return { status: "waiting_limit", retryAt };
+  }
+
+  /**
+   * 止まる状態（rejected）の再開予定時刻。行は箱の中から来る（Z3）ので、偽の値で会社全体を
+   * 止めっぱなしにさせない：分からなければ1時間後（R-17）、7日（Claude のいちばん長い枠）より先なら7日後
+   */
+  #boundedResetsAt(resetsAt: string | null): string {
+    const now = this.#now().getTime();
+    const at = resetsAt === null ? Number.NaN : Date.parse(resetsAt);
+    if (Number.isNaN(at)) return new Date(now + HOUR_MS).toISOString();
+    return new Date(Math.min(at, now + MAX_USAGE_WAIT_MS)).toISOString();
   }
 
   #failureReason(): string {
@@ -616,7 +637,10 @@ class RunExecution {
           this.#lastRateLimit = event;
           setUsageState(this.#env.db, {
             status: event.status,
-            resetsAt: event.resetsAt,
+            // 止まる状態（rejected）は、ほかの部署の実行も止める（5.4.6 の3）。箱の中から偽って
+            // 出されても止まりっぱなしにならないよう、再開予定時刻を必ず決め、先に延ばしすぎない
+            resetsAt:
+              event.status === "rejected" ? this.#boundedResetsAt(event.resetsAt) : event.resetsAt,
             rateLimitType: event.rateLimitType,
             utilization: event.utilization,
           });

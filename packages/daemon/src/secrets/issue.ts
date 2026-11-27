@@ -35,6 +35,11 @@ export interface PrepareSecretsInput {
   readonly secretsPath: string;
   readonly fetch: typeof fetch;
   readonly now: Date;
+  /**
+   * 発行先（GitHub・Google）の応答を待つ時間（ミリ秒、既定 30000）。答えないときに、
+   * 実行を starting のまま止めないため（取り消しも、これを待つ）
+   */
+  readonly timeoutMs?: number;
 }
 
 export interface PreparedSecrets {
@@ -47,6 +52,7 @@ export interface PreparedSecrets {
 }
 
 const GITHUB_API = "https://api.github.com";
+const ISSUE_TIMEOUT_MS = 30_000;
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 /** 返ってきたトークンの形（ヘッダーに入れられる、見える ASCII だけ） */
 const TOKEN = /^[\x21-\x7e]{8,4096}$/;
@@ -109,7 +115,7 @@ async function issue(
       return issueGithubAppToken(service, value, input);
     case "google_oauth":
       if (expected !== "google_oauth") break;
-      return issueGoogleAccessToken(service, value, input.fetch);
+      return issueGoogleAccessToken(service, value, input);
     case "anthropic_oauth":
       break;
   }
@@ -223,6 +229,7 @@ async function issueGithubAppToken(
     ...(repositories === null ? {} : { repositories }),
   };
 
+  const signal = AbortSignal.timeout(input.timeoutMs ?? ISSUE_TIMEOUT_MS);
   let res: Response;
   try {
     res = await input.fetch(`${GITHUB_API}/app/installations/${installationId}/access_tokens`, {
@@ -235,10 +242,11 @@ async function issueGithubAppToken(
         "x-github-api-version": "2022-11-28",
       },
       body: JSON.stringify(body),
+      signal,
     });
   } catch {
     throw new CredentialError(
-      `GitHub App のインストールトークンを発行できませんでした（${GITHUB_API} と通信できません）。ネットワークを確かめてください`,
+      `GitHub App のインストールトークンを発行できませんでした（${GITHUB_API} と${signal.aborted ? "時間内に通信できませんでした" : "通信できません"}）。ネットワークを確かめてください`,
     );
   }
   if (res.status !== 201) {
@@ -258,7 +266,7 @@ async function issueGithubAppToken(
 async function issueGoogleAccessToken(
   service: ServiceDefinition,
   value: Record<string, unknown>,
-  fetchFn: typeof fetch,
+  input: PrepareSecretsInput,
 ): Promise<string> {
   const form = new URLSearchParams({
     grant_type: "refresh_token",
@@ -266,16 +274,18 @@ async function issueGoogleAccessToken(
     client_secret: String(value.client_secret),
     refresh_token: String(value.refresh_token),
   });
+  const signal = AbortSignal.timeout(input.timeoutMs ?? ISSUE_TIMEOUT_MS);
   let res: Response;
   try {
-    res = await fetchFn(GOOGLE_TOKEN_URL, {
+    res = await input.fetch(GOOGLE_TOKEN_URL, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded", "user-agent": "aicoop" },
       body: form.toString(),
+      signal,
     });
   } catch {
     throw new CredentialError(
-      `Google のアクセストークンを発行できませんでした（${GOOGLE_TOKEN_URL} と通信できません）。ネットワークを確かめてください`,
+      `Google のアクセストークンを発行できませんでした（${GOOGLE_TOKEN_URL} と${signal.aborted ? "時間内に通信できませんでした" : "通信できません"}）。ネットワークを確かめてください`,
     );
   }
   if (res.status !== 200) {

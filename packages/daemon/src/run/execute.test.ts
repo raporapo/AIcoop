@@ -367,6 +367,25 @@ describe("5.1.1：部署ごとに1つの箱", () => {
     expect(mounts.find((m) => m.guestPath === "/work")?.hostPath).toBe(t.paths.groupWork("sales"));
     expect(mounts.some((m) => m.hostPath.startsWith(t.paths.groupWork("dev")))).toBe(false);
   });
+
+  it("5.1.3：タスクを作ったあとで社員の部署が変わっていたら（設定の読み直し）、箱を起こさずに failed。順番待ちが空いていると見た部署とは別の部署の箱で動かない", async () => {
+    const task = t.queueTask({ memberId: "dev-implementer" });
+    expect(task.groupId).toBe("dev");
+    t.reloadConfig({
+      groups: { ...DEFAULT_GROUPS, dev: { ...DEFAULT_GROUPS.dev, intake_member: "dev-reviewer" } },
+      members: {
+        ...DEFAULT_MEMBERS,
+        "dev-implementer": { name: "実装AI", group: "sales", role: "researcher" },
+      },
+    });
+    const handle = start(task.id);
+    // 順番待ちが数える部署は、タスクの部署のまま
+    expect(handle.groupId).toBe("dev");
+    const outcome = await handle.done;
+    expect(outcome.status).toBe("failed");
+    expect(getTask(t.db, task.id)?.error).toContain("部署");
+    expect(t.driver.boxes).toHaveLength(0);
+  });
 });
 
 const quiet: FakeClaude = () => 0;
@@ -822,6 +841,48 @@ describe("5.4.6：利用枠", () => {
     expect(task?.status).toBe("waiting_limit");
     expect(task?.retryAt).toBe("2026-11-28T01:01:00.000Z");
     expect(getUsageState(t.db)?.resetsAt).toBe("2026-11-28T01:00:00.000Z");
+  });
+
+  describe("P-1：箱の中から偽の rate_limit_event を出されても、会社全体を止めっぱなしにさせない", () => {
+    it("再開予定時刻のない rejected を出して報告して終えても、usage_state は1時間後に戻る（止まりっぱなしにしない）", async () => {
+      const { outcome } = await runOnce(async (claude) => {
+        claude.emit(fakeEvents.rateLimit({ status: "rejected" }));
+        await claude.reportResult("済");
+        return 0;
+      });
+      expect(outcome.status).toBe("done");
+      expect(getUsageState(t.db)).toMatchObject({
+        status: "rejected",
+        resetsAt: "2026-11-28T01:00:00.000Z",
+      });
+    });
+
+    it("再開予定時刻は、いまから7日（Claude のいちばん長い枠）より先にしない", async () => {
+      const farFuture = Date.parse("2100-01-01T00:00:00.000Z") / 1000;
+      const { outcome, task } = await runOnce((claude) => {
+        claude.emit(fakeEvents.rateLimit({ status: "rejected", resetsAt: farFuture }));
+        claude.emit(fakeEvents.result({ is_error: true, result: "limit" }));
+        return 1;
+      });
+      expect(outcome.status).toBe("waiting_limit");
+      expect(getUsageState(t.db)?.resetsAt).toBe("2026-12-05T00:00:00.000Z");
+      expect(task?.retryAt).toBe("2026-12-05T00:01:00.000Z");
+    });
+
+    it("結果の文言の再開予定時刻も、7日より先にしない", async () => {
+      const farFuture = Date.parse("2100-01-01T00:00:00.000Z") / 1000;
+      const { task } = await runOnce((claude) => {
+        claude.emit(
+          fakeEvents.result({
+            is_error: true,
+            result: `Claude AI usage limit reached|${farFuture}`,
+          }),
+        );
+        return 1;
+      });
+      expect(task?.retryAt).toBe("2026-12-05T00:01:00.000Z");
+      expect(getUsageState(t.db)?.resetsAt).toBe("2026-12-05T00:00:00.000Z");
+    });
   });
 });
 

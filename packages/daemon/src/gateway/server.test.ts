@@ -210,6 +210,24 @@ describe("5.3.3：report_result の入力の検証（9.3 の invalid_input）", 
     expect((await call({ summary: "あ".repeat(4000) })).isError).toBeFalsy();
   });
 
+  it("P-1：summary に端末を操る制御文字（ESC・C1 など）や、向きを変える文字があれば invalid_input（オーナーの画面に出るので）", async () => {
+    const c = (code: number) => String.fromCodePoint(code);
+    for (const bad of [
+      `${c(0x1b)}]52;c;ZXZpbA==${c(0x07)}済`, // OSC 52（クリップボードの書き換え）
+      `${c(0x1b)}[2K${c(0x1b)}[1A成功しました`, // 行を消して書き直す
+      `済${c(0x9b)}31m`, // C1 の CSI
+      `済${c(0x00)}`,
+      `済${c(0x7f)}`,
+      `失敗${c(0x202e)}しました`, // 向きの上書き
+      `済${c(0x2066)}x${c(0x2069)}`, // 向きの分離
+    ]) {
+      expect(errorOf(await call({ summary: bad })).error).toBe("invalid_input");
+    }
+    expect(reports).toEqual([]);
+    // 改行・タブはよい
+    expect((await call({ summary: "1行目\n\t2行目\r\n3行目" })).isError).toBeFalsy();
+  });
+
   it("files が51個以上・文字列の配列でないなら invalid_input", async () => {
     const many = Array.from({ length: 51 }, () => "a.txt");
     expect(errorOf(await call({ summary: "s", files: many })).error).toBe("invalid_input");
