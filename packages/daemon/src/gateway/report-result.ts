@@ -91,13 +91,15 @@ export function validateReportResult(args: unknown, workDir: string): ReportVali
 
 /**
  * 端末を操る制御文字（タブ・改行・復帰以外の Cc。ESC・C1 の CSI など）と、
- * 文字の向きを変える文字（埋め込み・上書き U+202A〜U+202E、分離 U+2066〜U+2069）を含むか
+ * 文字の向きを変える文字（印 U+061C・U+200E・U+200F、埋め込み・上書き U+202A〜U+202E、
+ * 分離 U+2066〜U+2069）を含むか。CLI の表示の無害化（packages/cli の ui/text.ts）と同じ範囲
  */
 function hasUnsafeChar(text: string): boolean {
   for (const ch of text) {
     const code = ch.codePointAt(0) ?? 0;
     if (code === 0x09 || code === 0x0a || code === 0x0d) continue;
     if (/\p{Cc}/u.test(ch)) return true;
+    if (code === 0x061c || code === 0x200e || code === 0x200f) return true;
     if ((code >= 0x202a && code <= 0x202e) || (code >= 0x2066 && code <= 0x2069)) return true;
   }
   return false;

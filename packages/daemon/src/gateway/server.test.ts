@@ -220,6 +220,7 @@ describe("5.3.3：report_result の入力の検証（9.3 の invalid_input）", 
       `済${c(0x7f)}`,
       `失敗${c(0x202e)}しました`, // 向きの上書き
       `済${c(0x2066)}x${c(0x2069)}`, // 向きの分離
+      `済${c(0x200f)}`, // 向きの印
     ]) {
       expect(errorOf(await call({ summary: bad })).error).toBe("invalid_input");
     }
