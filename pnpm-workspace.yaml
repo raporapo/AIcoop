@@ -1,10 +1,11 @@
 packages:
   - "packages/*"
 
-# インストールスクリプトを動かしてよい依存（それ以外は動かさない）
+# インストールスクリプトを動かすかどうか。どれも動かさない
 allowBuilds:
-  # SQLite のネイティブモジュール（state.db。7章）
-  better-sqlite3: true
+  # SQLite のネイティブモジュール（state.db。7章）。全OS向けのビルド済みファイル（prebuilds/）を
+  # 同梱しているので、ビルドは要らない。動かすと Visual Studio の無い Windows で失敗する
+  better-sqlite3: false
   # ssh2 の任意の高速化。Gondolin の SSH 中継でしか使わず、無くても動く
   cpu-features: false
   ssh2: false
