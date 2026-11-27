@@ -19,8 +19,17 @@ describe("5.4.2：claude -p の起動のしかた（vm の箱）", () => {
       "--mcp-config",
       "/etc/aicoop/mcp.json",
       "--strict-mcp-config",
+      "--disallowedTools",
+      "WebSearch",
       "--dangerously-skip-permissions",
     ]);
+  });
+
+  it("T-3：WebSearch は道具の一覧から外す（資格プロキシを通らない。Web は web.read の許可で読む）", () => {
+    const argv = claudeArgv({ prompt: "p", model: "sonnet", maxTurns: 1, resume: null });
+    const i = argv.indexOf("--disallowedTools");
+    expect(i).toBeGreaterThan(0);
+    expect(argv[i + 1]).toBe("WebSearch");
   });
 
   it("5.4.5 の4：続きから始めるときだけ --resume <session_id> を付ける", () => {

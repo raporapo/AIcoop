@@ -749,6 +749,9 @@ describe.skipIf(!ENABLED)(
       const tools = Array.isArray(init?.tools) ? (init.tools as string[]) : [];
       const mcpTools = tools.filter((t) => t.startsWith("mcp__"));
       expect(mcpTools).toEqual(["mcp__aicoop__report_result"]);
+      // T-3：WebSearch は資格プロキシを通らないので、道具の一覧に出ない（--disallowedTools と管理設定。V-8）
+      expect(tools).not.toContain("WebSearch");
+      console.log(`[V-8] 本物の Claude Code の道具：${tools.join(", ")}`);
       // ログインできずに終わるので、報告はない
       expect(realClaude.task.status).toBe("failed");
       expect(realClaude.task.result_summary).toBeNull();
