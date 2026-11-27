@@ -232,7 +232,9 @@ export type AuditBreakReason =
   /** 最初の行より前が消されているのに、それを示す checkpoint がない */
   | "missing_checkpoint"
   /** checkpoint 行の中身がおかしい（形・つじつま） */
-  | "checkpoint_invalid";
+  | "checkpoint_invalid"
+  /** 最後の行の seq が、データベースの通し番号の記録と合わない（末尾の行が消された） */
+  | "last_seq_mismatch";
 
 export type AuditVerifyResult =
   | {
@@ -254,8 +256,14 @@ export type AuditVerifyResult =
 /**
  * 5.10 の4：最初から最後までハッシュのつながりを確かめる。
  * `rows` は seq の小さい順に渡す（データベースから1行ずつ読みながら渡してよい）。
+ *
+ * `expectedLastSeq` に、これまでに書いた最後の seq（SQLite の AUTOINCREMENT の記録）を渡すと、
+ * 末尾の行が消されたことにも気づける。null は「1行も書いていない」。
  */
-export function verifyAuditChain(rows: Iterable<AuditRow>): AuditVerifyResult {
+export function verifyAuditChain(
+  rows: Iterable<AuditRow>,
+  opts: { readonly expectedLastSeq?: number | null } = {},
+): AuditVerifyResult {
   let first: AuditRow | undefined;
   let prev: AuditRow | undefined;
   let count = 0;
@@ -331,6 +339,20 @@ export function verifyAuditChain(rows: Iterable<AuditRow>): AuditVerifyResult {
       seq: first.seq,
       reason: "missing_checkpoint",
       message: `seq ${first.seq}：これより前の行が消されていますが、それを示す checkpoint 行がありません`,
+    };
+  }
+  const lastSeq = prev?.seq ?? null;
+  if (opts.expectedLastSeq !== undefined && opts.expectedLastSeq !== lastSeq) {
+    const expected = opts.expectedLastSeq ?? 0;
+    const seq = lastSeq === null || lastSeq < expected ? (lastSeq ?? 0) + 1 : expected + 1;
+    return {
+      ok: false,
+      seq,
+      reason: "last_seq_mismatch",
+      message:
+        lastSeq === null || lastSeq < expected
+          ? `seq ${seq}：最後に書いた seq ${expected} までの行がありません（末尾の行が消されています）`
+          : `seq ${seq}：通し番号の記録（${expected}）より後ろの行があります（記録が書き換えられています）`,
     };
   }
   return {

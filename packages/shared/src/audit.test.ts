@@ -285,6 +285,37 @@ describe("5.10 の4：つながりの確認（verifyAuditChain）", () => {
       expect(result).toMatchObject({ ok: true, lastSeq: 4 });
       if (result.ok) expect(result.lastHash).not.toBe(full[4]?.hash);
     });
+
+    describe("最後の seq が分かっているとき（データベースの通し番号の記録）", () => {
+      it("末尾の行を消すと、最後に残った行の次の seq で失敗する", () => {
+        const rows = chain(5).slice(0, 3);
+        expect(verifyAuditChain(rows, { expectedLastSeq: 5 })).toMatchObject({
+          ok: false,
+          seq: 4,
+          reason: "last_seq_mismatch",
+        });
+      });
+
+      it("すべての行を消すと失敗する", () => {
+        expect(verifyAuditChain([], { expectedLastSeq: 5 })).toMatchObject({
+          ok: false,
+          seq: 1,
+          reason: "last_seq_mismatch",
+        });
+      });
+
+      it("記録より後ろの行があっても失敗する（記録が書き換えられた）", () => {
+        expect(verifyAuditChain(chain(5), { expectedLastSeq: 3 })).toMatchObject({
+          ok: false,
+          reason: "last_seq_mismatch",
+        });
+      });
+
+      it("記録と合っていれば通る", () => {
+        expect(verifyAuditChain(chain(5), { expectedLastSeq: 5 })).toMatchObject({ ok: true });
+        expect(verifyAuditChain([], { expectedLastSeq: null })).toMatchObject({ ok: true });
+      });
+    });
   });
 
   describe("5.10 の5：checkpoint 行（保存期間で古い行を消したあと）", () => {
