@@ -7,6 +7,8 @@
  *   --dangerously-skip-permissions [--resume <session_id>]
  * ```
  *
+ * `--disallowedTools WebSearch`：WebSearch は Anthropic の側で動き、資格プロキシの判定を通らないので渡さない
+ * （T-3。管理設定の `permissions.deny` と重ねて止める）。
  * `--dangerously-skip-permissions` は vm と srt の箱の中でだけ付ける。CEO（none）では付けてはならない（5.11）。
  * このモジュールは vm の箱だけを扱う。
  */
@@ -64,6 +66,8 @@ export function claudeArgv(input: ClaudeCommandInput): string[] {
     "--mcp-config",
     GUEST_PATHS.mcpConfig,
     "--strict-mcp-config",
+    "--disallowedTools",
+    "WebSearch",
     "--dangerously-skip-permissions",
     ...(input.resume === null ? [] : ["--resume", input.resume]),
   ];
