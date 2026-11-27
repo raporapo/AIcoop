@@ -60,6 +60,8 @@ interface SeenInBox {
   readonly decisions: Record<string, ProxyDecision>;
   /** 道具ゲートへの MCP の JSON-RPC の応答 */
   readonly mcp: Record<string, TestResponse>;
+  /** /etc/aicoop/mcp.json の Authorization（その実行の道具ゲートのトークン） */
+  gatewayAuthorization: string;
 }
 
 const seen: SeenInBox[] = [];
@@ -83,6 +85,7 @@ const e2eClaude: FakeClaude = async (claude) => {
     tools: [],
     decisions: {},
     mcp: {},
+    gatewayAuthorization: "",
   };
   seen.push(record);
   claude.emit(fakeEvents.init(`e2e-session-${n}`));
@@ -115,9 +118,14 @@ const e2eClaude: FakeClaude = async (claude) => {
   record.decisions.hostDenied = await claude.request({ host: "example.com", path: "/" });
 
   // 5.3.1：道具ゲート。MCP のクライアントで一覧を見たあと、箱の中の curl と同じく
-  // Host: aicoop.internal で JSON-RPC を1つずつ送る（道具ゲートはセッションを持たない）
+  // Host: aicoop.internal で JSON-RPC を1つずつ送る（道具ゲートはセッションを持たない）。
+  // ゲートのトークンは、本物の Claude Code と同じく /etc/aicoop/mcp.json の headers から読む
   record.tools = await claude.listTools();
-  const mcp = (body: unknown) =>
+  const mcpJson = JSON.parse(readFileSync(claude.hostPath("/etc/aicoop/mcp.json"), "utf8")) as {
+    mcpServers: { aicoop: { headers: { Authorization: string } } };
+  };
+  record.gatewayAuthorization = mcpJson.mcpServers.aicoop.headers.Authorization;
+  const mcp = (body: unknown, authorization: string | null) =>
     apiRequest(claude.spec.network.gatewayPort, {
       raw: true,
       method: "POST",
@@ -127,13 +135,14 @@ const e2eClaude: FakeClaude = async (claude) => {
       headers: {
         accept: "application/json, text/event-stream",
         "content-type": "application/json",
+        ...(authorization === null ? {} : { authorization }),
       },
       rawBody: JSON.stringify(body),
     });
   const report = claude.hostPath("/work/e2e/report.md");
   mkdirSync(join(report, ".."), { recursive: true });
   writeFileSync(report, `${n}回目の報告\n`);
-  record.mcp.report = await mcp({
+  const reportCall = {
     jsonrpc: "2.0",
     id: 1,
     method: "tools/call",
@@ -141,7 +150,11 @@ const e2eClaude: FakeClaude = async (claude) => {
       name: "report_result",
       arguments: { summary: `${n}回目：確かめました`, files: ["/work/e2e/report.md"] },
     },
-  });
+  };
+  // トークンなし・違うトークンは 401（記録されない）
+  record.mcp.noToken = await mcp(reportCall, null);
+  record.mcp.wrongToken = await mcp(reportCall, "Bearer wrong-token");
+  record.mcp.report = await mcp(reportCall, record.gatewayAuthorization);
 
   // 5.4.4：次の実行に仕掛けを残そうとする
   for (const path of Object.values(TRAPS)) writeFileSync(claude.hostPath(path), "{}\n");
@@ -310,6 +323,11 @@ describe("P1 の完了条件（14章）：雛形の会社・本物の daemon と
     const first = seen[0] as SeenInBox;
     // 5.3.1：道具ゲートの道具は report_result だけ。セッションなしの JSON-RPC で呼べる
     expect(first.tools).toEqual(["report_result"]);
+    // 道具ゲートは、その実行のトークン（mcp.json の headers）のないリクエストに答えない
+    expect(first.gatewayAuthorization).toMatch(/^Bearer [A-Za-z0-9_-]{43}$/);
+    expect(first.mcp.noToken?.status).toBe(401);
+    expect(first.mcp.wrongToken?.status).toBe(401);
+    expect(seen[1]?.gatewayAuthorization).not.toBe(first.gatewayAuthorization);
     expect(first.mcp.report?.status).toBe(200);
     expect(first.mcp.report?.json).toMatchObject({ jsonrpc: "2.0", id: 1 });
     expect(first.mcp.report?.json.result.isError).toBeUndefined();
@@ -451,6 +469,9 @@ describe("P1 の完了条件（14章）：雛形の会社・本物の daemon と
         github: secrets.github,
         placeholder: PLACEHOLDER,
         api_token: token,
+        ...Object.fromEntries(
+          seen.map((r, i) => [`gateway_token_${i + 1}`, r.gatewayAuthorization.slice(7)]),
+        ),
       }),
     ).toEqual([]);
     // 漏らそうとした行は、伏せ字にして記録してある

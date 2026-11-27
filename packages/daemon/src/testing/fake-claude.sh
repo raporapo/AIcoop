@@ -4,7 +4,8 @@
 #   1. stream-json の system/init の行を出す（session_id は自分で作る）
 #   2. 箱の中から見えたもの（引数・env・/proc/*/environ・ファイル）を /work/e2e/<session_id>/ に書く
 #   3. curl で、資格プロキシ（github.com・api.github.com・許可していないホスト）と、
-#      道具ゲート（http://aicoop.internal/mcp。MCP の JSON-RPC をセッションなしで1つずつ）に送り、応答を書く
+#      道具ゲート（http://aicoop.internal/mcp。MCP の JSON-RPC をセッションなしで1つずつ。
+#      トークンは /etc/aicoop/mcp.json の headers の Authorization）に送り、応答を書く
 #   4. report_result で報告し、stream-json の result の行を出して 0 で終わる
 # タスク本文に AICOOP_E2E_SLEEP があれば、2 のあと止められるまで眠る（時間切れ・取り消しの確かめ）。
 # @E2E_ORG@・@E2E_OTHER_OWNER@ は、テストが箱のイメージに入れる前に置き換える。
@@ -77,11 +78,21 @@ git init -q "$repo" >/dev/null 2>&1
 echo $? > "$out/git-push-denied.status"
 
 # ---- 道具ゲート（MCP、Streamable HTTP） ----
-# mcp <名前> <JSON-RPC>：セッションIDを付けずに、1つずつ送る
+# その実行のゲートのトークンは、本物の Claude Code と同じく /etc/aicoop/mcp.json の headers から読む
+authorization=$(grep -o '"Authorization": *"Bearer [A-Za-z0-9_-]*"' /etc/aicoop/mcp.json | head -n 1 | sed 's/^"Authorization": *"//; s/"$//')
+# mcp <名前> <JSON-RPC> [Authorization]：セッションIDを付けずに、1つずつ送る
 mcp() {
-  code=$(curl -sS -m 30 -X POST "http://aicoop.internal/mcp" -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" --data-binary "$2" -o "$out/mcp-$1.body" -w '%{http_code}' 2>"$out/mcp-$1.err")
+  auth=${3-$authorization}
+  if [ -n "$auth" ]; then
+    code=$(curl -sS -m 30 -X POST "http://aicoop.internal/mcp" -H "Authorization: $auth" -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" --data-binary "$2" -o "$out/mcp-$1.body" -w '%{http_code}' 2>"$out/mcp-$1.err")
+  else
+    code=$(curl -sS -m 30 -X POST "http://aicoop.internal/mcp" -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" --data-binary "$2" -o "$out/mcp-$1.body" -w '%{http_code}' 2>"$out/mcp-$1.err")
+  fi
   echo "$code" > "$out/mcp-$1.status"
 }
+# トークンなし・違うトークンは 401（ほかの実行・ホストのほかのプロセスからは使えない）
+mcp no-token '{"jsonrpc":"2.0","id":9,"method":"tools/list"}' ""
+mcp wrong-token '{"jsonrpc":"2.0","id":9,"method":"tools/list"}' "Bearer wrong-token"
 mcp initialize '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"aicoop-e2e-fake-claude","version":"0.0.0"}}}'
 mcp initialized '{"jsonrpc":"2.0","method":"notifications/initialized"}'
 mcp list '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'

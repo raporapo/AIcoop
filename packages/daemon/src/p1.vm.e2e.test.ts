@@ -191,6 +191,16 @@ interface BoxReport {
   json(name: string): Record<string, unknown>;
 }
 
+/** 箱の中で読んだ /etc/aicoop/mcp.json の、道具ゲートのトークン */
+function gatewayToken(box: BoxReport): string {
+  const config = box.json("mcp.json") as {
+    mcpServers?: { aicoop?: { headers?: { Authorization?: string } } };
+  };
+  const value = config.mcpServers?.aicoop?.headers?.Authorization ?? "";
+  if (!value.startsWith("Bearer ")) throw new Error("mcp.json に道具ゲートのトークンがありません");
+  return value.slice("Bearer ".length);
+}
+
 function boxReport(workDir: string, sessionId: string): BoxReport {
   const dir = join(workDir, "e2e", sessionId);
   const read = (name: string) => readFileSync(join(dir, name), "utf8");
@@ -530,8 +540,11 @@ describe.skipIf(!ENABLED)(
         };
         expect(report.result.isError).toBeUndefined();
         expect(JSON.parse(report.result.content[0]?.text ?? "{}")).toMatchObject({ ok: true });
+        // 道具ゲートは、その実行のトークン（mcp.json の headers）のないリクエストに答えない
+        expect(box.status("mcp-no-token")).toBe("401");
+        expect(box.status("mcp-wrong-token")).toBe("401");
         // 5.3.1 の5・5.1.7：MCP の設定と管理設定は、箱の中で読み取り専用
-        expect(box.json("mcp.json")).toEqual(mcpConfig());
+        expect(box.json("mcp.json")).toEqual(mcpConfig(gatewayToken(box)));
         expect(box.read("etc-aicoop-write").trim()).toBe("readonly");
         expect(box.read("files").split("\n")).toEqual(
           expect.arrayContaining([
@@ -543,6 +556,8 @@ describe.skipIf(!ENABLED)(
         );
         expect(box.read("cwd").trim()).toBe("/work");
       }
+      // ゲートのトークンは実行ごとに作り直す
+      expect(gatewayToken(manualBox)).not.toBe(gatewayToken(cronBox));
       const argv = manualBox.read("argv").split("\0");
       expect(argv[0]).toBe("-p");
       expect(argv).toEqual(
@@ -651,6 +666,8 @@ describe.skipIf(!ENABLED)(
           placeholder_1: placeholders[0] as string,
           placeholder_2: placeholders[1] as string,
           api_token: token,
+          gateway_token_1: gatewayToken(manualBox),
+          gateway_token_2: gatewayToken(cronBox),
         }),
       ).toEqual([]);
       // 偽の claude が値を出力した実行（手動・cron）の記録では、伏せ字になっている
@@ -726,7 +743,9 @@ describe.skipIf(!ENABLED)(
       expect(init).toBeDefined();
       expect(run?.session_id).toBe(init?.session_id);
       expect(init?.cwd).toBe("/work");
-      expect(init?.mcp_servers).toEqual([{ name: "aicoop", status: "connected" }]);
+      expect(init?.mcp_servers).toEqual([
+        expect.objectContaining({ name: "aicoop", status: "connected" }),
+      ]);
       const tools = Array.isArray(init?.tools) ? (init.tools as string[]) : [];
       const mcpTools = tools.filter((t) => t.startsWith("mcp__"));
       expect(mcpTools).toEqual(["mcp__aicoop__report_result"]);
