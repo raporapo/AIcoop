@@ -80,7 +80,11 @@ const HOUR_MS = 60 * 60 * 1000;
 /** 失敗の理由に入れる、Claude Code の結果の文の長さの上限 */
 const MAX_REASON_CHARS = 200;
 
-/** 順番が来た queued のタスクを1つ実行し始める。すぐに返る（箱の起動などは裏で進む） */
+/**
+ * 順番が来た queued のタスクを1つ実行し始める。すぐに返る（箱の起動などは裏で進む）。
+ * - タスクが無ければ TaskNotFoundError を投げる
+ * - queued でなければ（先に取り消されたなど）何もせず、`done` はいまの状態ですぐに解決する
+ */
 export const startRun: StartRun = createStartRun();
 
 export function createStartRun(options: StartRunOptions = {}): StartRun {
