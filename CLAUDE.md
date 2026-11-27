@@ -49,4 +49,11 @@ pnpm format       # Biome で自動整形
 ## 開発環境のメモ
 
 - オーナーの開発機は Windows。`shared` のテストは Windows でもそのまま動く。
-- Gondolin（`vm` の箱）は Linux・macOS でしか動かない。箱まわりは WSL2 か macOS で開発する（設計書 4.3、16章 V-3）。
+- Gondolin（`vm` の箱）は Linux・macOS でしか動かず、Linux ではさらに KVM（ハードウェアの仮想化）が要る。箱まわりは WSL2 か macOS の実機で開発する（設計書 4.3、16章 V-3）。
+
+## クラウドのセッションで作業するとき
+
+- **pnpm がなければ** `corepack enable` で入れる（版は `package.json` の `packageManager` に従う）。それもできなければ `npm install -g pnpm@11`。Node は 24 LTS が前提（`.node-version`）。
+- **箱まわりは、クラウドでは確かめられないものとして扱う。** Gondolin・srt と、16章の V-1〜V-9 の検証には実機の仮想化が要り、クラウドの環境で KVM が使えるとは限らない。試して行き詰まらず、`docs/development.md` の「OSに依存しないもの」から進める。
+- **main に直接 push しない。** 作業ごとにブランチを切り、Pull Request を出す。PR の CI（`pnpm verify`、Ubuntu・macOS）が通っていることを確かめる。マージするかはオーナーが決める。
+- 設計書にない判断が要ったら、PR の本文と `docs/development.md` の「設計書に記録が必要な決定」の表の両方に書き、オーナーに確かめる。
