@@ -6,6 +6,7 @@
  * 画面は色・カーソルの移動（空白の代わり）・リンク（OSC 8）の制御の文字を含み、端末の幅で折り返される。
  * 取り出せないとき・確かでないときは null を返し、呼ぶ側は貼り付けに切り替える（拒否側に倒す）。
  */
+import { isClaudeLoginUrl } from "./api.ts";
 
 /** `claude setup-token` が作るトークンの頭（Claude のサブスクの長期トークン） */
 const PREFIX = /sk-ant-oat\d{2}-/g;
@@ -89,35 +90,12 @@ export function extractSetupToken(raw: string, columns?: number): string | null 
 
 // ---- ログイン用の URL（準備の画面。5.14 の3の2） ----
 
-/** ログイン用の URL として受け入れるホスト（Claude のアカウントのログイン） */
-const LOGIN_HOSTS: ReadonlySet<string> = new Set(["claude.ai", "claude.com"]);
-const MAX_URL = 4096;
 // biome-ignore lint/suspicious/noControlCharactersInRegex: 端末の制御の符号（OSC 8 のリンク）を見つけるための式
 const OSC8 = /\x1b\]8;[^;\x07\x1b]*;([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
 const URL_IN_TEXT = /https:\/\/[!-~]+/g;
-const PRINTABLE_ASCII = /^[!-~]+$/;
 
-/**
- * ログイン用の URL か：`https://claude.ai/…/oauth/authorize…`（claude.com も）。ほかのホスト・ポート・
- * ユーザー名つき・空白や制御の文字を含むものは受け入れない（承認アプリが開くので、拒否側に倒す）
- */
-export function isClaudeLoginUrl(value: string): boolean {
-  if (value.length > MAX_URL || !PRINTABLE_ASCII.test(value)) return false;
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    return false;
-  }
-  return (
-    url.protocol === "https:" &&
-    LOGIN_HOSTS.has(url.hostname) &&
-    url.port === "" &&
-    url.username === "" &&
-    url.password === "" &&
-    url.pathname.includes("/oauth/authorize")
-  );
-}
+/** ログイン用の URL か（承認アプリも同じもので確かめるので、`@aicoop/shared/api` に置いた） */
+export { isClaudeLoginUrl };
 
 /**
  * 画面の記録から、ログイン用の URL を取り出す。リンク（OSC 8）の行き先を先に見て、なければ画面の文字から探す。

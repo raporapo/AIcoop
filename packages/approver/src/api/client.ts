@@ -14,6 +14,7 @@ import type {
   ApprovalIntentRequest,
   ApprovalIntentResponse,
   CancelTaskResponse,
+  ClaudeLoginView,
   ConfigIssue,
   CreateConfigChangeRequest,
   CreateConfigChangeResponse,
@@ -23,9 +24,11 @@ import type {
   CreateTaskResponse,
   GetConfigFileResponse,
   GetHoldResponse,
+  GetImageBuildResponse,
   GetTaskResponse,
   GrantStatusView,
   HoldStatus,
+  ImageBuildView,
   ListAuditResponse,
   ListConfigFilesResponse,
   ListDevicesResponse,
@@ -43,6 +46,9 @@ import type {
   PairingRegisterRequest,
   PairingRegisterResponse,
   RevokeDeviceResponse,
+  SetupCompanyRequest,
+  SetupRepositoriesRequest,
+  SetupResponse,
   StatusResponse,
   UsageResponse,
 } from "@aicoop/shared/api";
@@ -229,5 +235,19 @@ export function createApiClient(options: ApiClientOptions = {}) {
     listSecrets: () => get<ListSecretsResponse>("/secrets"),
     createSecretChange: (req: CreateSecretChangeRequest) =>
       post<CreateSecretChangeResponse>("/secrets/changes", req),
+
+    // ---- 準備の画面（5.14 の3。PC のブラウザだけ） ----
+    setup: () => get<SetupResponse>("/setup"),
+    setupCompany: (req: SetupCompanyRequest) =>
+      post<CreateConfigChangeResponse>("/setup/company", req),
+    setupRepositories: (req: SetupRepositoriesRequest) =>
+      post<CreateConfigChangeResponse>("/setup/github/repositories", req),
+    startClaudeLogin: () => post<ClaudeLoginView>("/setup/claude-login"),
+    submitClaudeLoginCode: (id: string, code: string) =>
+      post<ClaudeLoginView>(`/setup/claude-login/${seg(id)}/code`, { code }),
+    cancelClaudeLogin: (id: string) =>
+      post<ClaudeLoginView>(`/setup/claude-login/${seg(id)}/cancel`),
+    startImageBuild: () => post<ImageBuildView>("/images/build"),
+    imageBuild: () => get<GetImageBuildResponse>("/images/build"),
   };
 }
