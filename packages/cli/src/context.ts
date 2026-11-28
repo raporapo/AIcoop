@@ -3,7 +3,7 @@
  * テストでは偽物を差し込む（`src/testing/harness.ts`）。
  */
 import type { BuildImageOptions, BuildImageResult } from "@aicoop/box-gondolin";
-import type { BoxDrivers } from "@aicoop/daemon";
+import type { BoxDrivers, ImageBuildRunner } from "@aicoop/daemon";
 import type { DaemonEntry } from "./commands/daemon-entry.ts";
 
 export interface OutputStream {
@@ -39,6 +39,11 @@ export interface CliDeps {
   /** 箱のドライバー（vm は Gondolin） */
   readonly createDrivers: (home: string, platform: NodeJS.Platform) => Promise<BoxDrivers>;
   readonly buildImage: (options: BuildImageOptions) => Promise<BuildImageResult>;
+  /**
+   * 準備の画面（5.14 の3の4）から、`aicoop image build` を子のプロセスで動かす（`aicoop daemon` が daemon に差し込む）。
+   * 出力を1行ずつ渡す
+   */
+  readonly runImageBuild: ImageBuildRunner;
   /** `aicoop daemon --background --home <home>` を裏で起こす。標準出力・標準エラーは logFile へ */
   readonly spawnDaemon: (home: string, logFile: string) => SpawnedDaemon;
   readonly isProcessAlive: (pid: number) => boolean;

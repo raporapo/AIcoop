@@ -18,6 +18,7 @@
 import { randomBytes } from "node:crypto";
 import { readFileSync, rmSync } from "node:fs";
 import type { Server } from "node:http";
+import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { createGondolinDriver } from "@aicoop/box-gondolin";
 import {
@@ -53,6 +54,12 @@ import { removeStaleRuntimeDirs } from "../run/runtime-files.ts";
 import type { BoxDrivers, RunEnvironment, StartRun } from "../run/types.ts";
 import { createTaskScheduler, type TaskScheduler } from "../scheduler/scheduler.ts";
 import { createSettings } from "../settings/service.ts";
+import { createClaudeLogin } from "../setup/claude-login.ts";
+import { defaultReadinessHost } from "../setup/host.ts";
+import { createImageBuilds, type ImageBuildRunner } from "../setup/image-build.ts";
+import type { SpawnPty } from "../setup/pty.ts";
+import type { ReadinessHost } from "../setup/readiness.ts";
+import { createSetup } from "../setup/service.ts";
 import { systemTimers, type TimerHandle, type Timers } from "../timers.ts";
 import { checkRunnableMember } from "../triggers/runnable.ts";
 import { createCronTask, startTriggers, type TriggerSet } from "../triggers/triggers.ts";
@@ -122,6 +129,25 @@ export interface StartDaemonOptions {
   readonly approvalTargets?: ApprovalTargets;
   /** 承認アプリの静的ファイルの場所（既定：packages/approver/dist。テスト用） */
   readonly approverDir?: string;
+  /** 準備の画面（5.14 の3）が使う、この PC の部品 */
+  readonly setup?: SetupOptions;
+}
+
+/** 準備の画面（5.14 の3）が使う、この PC の部品。どれも、なければ daemon のプロセスのもの */
+export interface SetupOptions {
+  /** 準備の確認が見る OS・PATH（テスト用） */
+  readonly host?: Partial<ReadinessHost>;
+  /** `script … claude setup-token` を動かす（テスト用） */
+  readonly spawnPty?: SpawnPty;
+  /** setup-token に渡す環境変数のもと（テスト用） */
+  readonly env?: NodeJS.ProcessEnv;
+  /** OS のホーム（`~/.local/bin/claude` を探す。テスト用） */
+  readonly userHome?: string;
+  /**
+   * 箱のイメージを作る（`aicoop image build` と同じこと。5.14 の3の4）。Gondolin は daemon から直接呼ばない
+   * （4.4）ので、CLI の `aicoop daemon` が差し込む。なければ、準備の画面からはイメージを作れない
+   */
+  readonly runImageBuild?: ImageBuildRunner;
 }
 
 export interface DaemonHandle {
@@ -221,6 +247,7 @@ export async function startDaemon(options: StartDaemonOptions): Promise<DaemonHa
   let info: DaemonInfo;
   let drivers: BoxDrivers;
   let approvalTargets: ApprovalTargets;
+  let stopSetup: () => Promise<void> = async () => {};
 
   try {
     // 3. ログ・state.db
@@ -400,6 +427,8 @@ export async function startDaemon(options: StartDaemonOptions): Promise<DaemonHa
             options.stopTimeoutMs === undefined ? {} : { timeoutMs: options.stopTimeoutMs },
           );
           await closeApiServer(server);
+          // 準備の画面の Claude へのログイン（setup-token）と、イメージを作るのを止める
+          await stopSetup();
           // 承認のあとの処理（保留の再送など）を待ってから state.db を閉じる
           await approvals.drain();
         } catch (error) {
@@ -478,6 +507,41 @@ export async function startDaemon(options: StartDaemonOptions): Promise<DaemonHa
     });
     approvalTargets = { ...approvalTargets, ...settings.targets(), ...options.approvalTargets };
 
+    // 準備の画面（5.14 の3）。ログインの状態・イメージの進み具合は、このプロセスのメモリの中だけ
+    const host: ReadinessHost = { ...defaultReadinessHost(now), ...options.setup?.host };
+    const setup = createSetup({
+      home,
+      secretsPath: paths.secrets,
+      host,
+      settings,
+      config: () => config,
+      login: createClaudeLogin({
+        platform: host.platform,
+        userHome: options.setup?.userHome ?? homedir(),
+        which: (command) => host.which(command),
+        ...(options.setup?.spawnPty !== undefined && { spawn: options.setup.spawnPty }),
+        ...(options.setup?.env !== undefined && { env: options.setup.env }),
+        timers,
+        now,
+        logger,
+        propose: (token) =>
+          settings.proposeSecretChange({ id: "anthropic", kind: "anthropic_oauth", value: token }),
+      }),
+      images: createImageBuilds({
+        home,
+        platform: host.platform,
+        ...(options.setup?.runImageBuild !== undefined && {
+          runner: options.setup.runImageBuild,
+        }),
+        now,
+        logger,
+      }),
+    });
+    stopSetup = async () => {
+      setup.login.stop();
+      await setup.images.stop();
+    };
+
     const control: ApiControl = {
       db,
       paths,
@@ -508,6 +572,7 @@ export async function startDaemon(options: StartDaemonOptions): Promise<DaemonHa
       approvals,
       approverDir: options.approverDir ?? defaultApproverDir(),
       settings,
+      setup,
     };
 
     server = createApiServer(createApiApp(control));

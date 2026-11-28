@@ -94,6 +94,23 @@ describe("9.1 aicoop daemon：前面で動かし、Ctrl+C で止める", () => {
     expect(r.stderr).toContain("止めました");
   });
 
+  it("5.14 の3の4：準備の画面のイメージ作り（aicoop image build を子のプロセスで動かすもの）を daemon に差し込む", async () => {
+    const runImageBuild = async () => ({ exitCode: 0 });
+    const other = createTestCli({
+      deps: { loadDaemonEntry: async () => fake.entry, runImageBuild },
+    });
+    try {
+      await other.run(["init"]);
+      const running = other.start(["daemon"]);
+      await waitFor(() => fake.calls.length > 0);
+      expect(fake.calls[0]?.setup?.runImageBuild).toBe(runImageBuild);
+      other.interrupts.fire();
+      await running.done;
+    } finally {
+      other.cleanup();
+    }
+  });
+
   it("--background ならログを logs/ に（logToStdout: false）", async () => {
     const running = cli.start(["daemon", "--background"]);
     await waitFor(() => fake.calls.length > 0);

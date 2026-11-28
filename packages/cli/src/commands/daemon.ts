@@ -58,6 +58,8 @@ export async function run(input: CommandInput): Promise<number> {
       startRun: entry.startRun,
       drivers,
       logToStdout: !background,
+      // 準備の画面（5.14 の3の4）のイメージ作り。Gondolin は daemon から直接呼ばない（4.4）
+      setup: { runImageBuild: ctx.deps.runImageBuild },
     });
   } catch (e) {
     const issues = configIssuesOf(e);

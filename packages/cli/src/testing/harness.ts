@@ -156,6 +156,9 @@ export function createTestCli(options: TestCliOptions = {}): TestCli {
     buildImage: async () => {
       throw new Error("テストでは buildImage を差し込んでください");
     },
+    runImageBuild: async () => {
+      throw new Error("テストでは runImageBuild を差し込んでください");
+    },
     spawnDaemon: () => {
       throw new Error("テストでは spawnDaemon を差し込んでください");
     },

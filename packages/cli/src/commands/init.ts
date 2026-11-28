@@ -10,14 +10,21 @@
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { aicoopPaths, resolveAicoopHome } from "@aicoop/daemon";
-import { COMPANY_ID_PATTERN, initTemplateFiles, newId, renderInitTemplate } from "@aicoop/shared";
+import {
+  COMPANY_ID_PATTERN,
+  DEFAULT_COMPANY_NAME,
+  initTemplateFiles,
+  newId,
+  renderInitTemplate,
+} from "@aicoop/shared";
 import { parse as parseYaml } from "yaml";
 import type { CommandInput } from "../command.ts";
 import { CliError, UsageError } from "../errors.ts";
 import { EXIT } from "../exit-codes.ts";
 import { shortPath } from "../home.ts";
 
-export const DEFAULT_COMPANY_NAME = "わたしの会社";
+export { DEFAULT_COMPANY_NAME };
+
 const MAX_NAME_LENGTH = 100;
 
 function companyName(value: string | boolean | undefined): string {

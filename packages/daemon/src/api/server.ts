@@ -40,6 +40,7 @@ import { getUsageState, type UsageState } from "../db/usage.ts";
 import type { AicoopPaths } from "../paths.ts";
 import type { RunHandle } from "../run/types.ts";
 import type { Settings } from "../settings/service.ts";
+import type { Setup } from "../setup/service.ts";
 import type { RunnableCheck } from "../triggers/runnable.ts";
 import { actorOf, authenticate, requireBearer } from "./auth.ts";
 import {
@@ -68,6 +69,7 @@ import { appRoutes } from "./routes/app.ts";
 import { protectedApprovalRoutes, publicApprovalRoutes } from "./routes/approvals.ts";
 import { registerHoldRoutes } from "./routes/holds.ts";
 import { settingsRoutes } from "./routes/settings.ts";
+import { setupRoutes } from "./routes/setup.ts";
 
 /** 本文の上限 */
 export const MAX_BODY_BYTES = 64 * 1024;
@@ -110,6 +112,8 @@ export interface ApiControl {
   readonly approverDir: string;
   /** 設定の画面と資格の画面（5.14 の4・5） */
   readonly settings: Settings;
+  /** 準備の画面（5.14 の3） */
+  readonly setup: Setup;
 }
 
 /** 道の中で投げて、決まった形の失敗を返す */
@@ -529,6 +533,9 @@ export function createApiApp(control: ApiControl): Hono {
 
   // 設定の画面と資格の画面（5.14 の4・5）。PC のブラウザのセッションだけ（requireLocalSession）
   api.route("/", settingsRoutes({ settings: control.settings, logger }));
+
+  // 準備の画面（5.14 の3）。PC のブラウザのセッションだけ（requireLocalSession）
+  api.route("/", setupRoutes({ setup: control.setup, logger }));
 
   app.route(API_PREFIX, api);
 

@@ -97,6 +97,36 @@ export const realDeps: CliDeps = {
     const { buildImage } = await import("@aicoop/box-gondolin");
     return buildImage(options);
   },
+  runImageBuild: ({ home, onLine, signal }) =>
+    new Promise((resolve) => {
+      // `aicoop image build` と同じことを、子のプロセスで行う（色なし。Gondolin の進み具合は標準エラー）
+      const child = spawn(process.execPath, [BIN_PATH, "image", "build", "--home", home], {
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
+        env: { ...process.env, NO_COLOR: "1" },
+      });
+      const split = (stream: NodeJS.ReadableStream) => {
+        let rest = "";
+        stream.setEncoding("utf8");
+        stream.on("data", (chunk: string) => {
+          const parts = (rest + chunk).split(/\r\n|\r|\n/);
+          rest = parts.pop() ?? "";
+          for (const line of parts) onLine(line);
+        });
+        stream.on("end", () => {
+          if (rest !== "") onLine(rest);
+        });
+      };
+      split(child.stdout);
+      split(child.stderr);
+      const abort = () => child.kill("SIGTERM");
+      signal.addEventListener("abort", abort, { once: true });
+      child.once("error", () => resolve({ exitCode: null }));
+      child.once("close", (code) => {
+        signal.removeEventListener("abort", abort);
+        resolve({ exitCode: code });
+      });
+    }),
   spawnDaemon: (home, logFile) => {
     mkdirSync(dirname(logFile), { recursive: true });
     const fd = openSync(logFile, "a", 0o600);

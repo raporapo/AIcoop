@@ -9,32 +9,20 @@
  * - setup-token は端末でだけ動く画面なので、`script` で擬似端末を用意して動かす。画面はそのまま見せ、記録はメモリだけに持つ
  * - 取り出せない・確かでないときは、保存せずに貼り付けに切り替える（拒否側に倒す）
  */
+import { extractSetupToken, setupTokenArgv } from "@aicoop/shared";
 import type { CommandInput } from "../command.ts";
 import { CliError, UsageError } from "../errors.ts";
 import { EXIT } from "../exit-codes.ts";
 import { requireInitialized } from "../home.ts";
-import { extractSetupToken } from "../setup-token.ts";
 import { readLine } from "../stdin.ts";
 import { readPastedSecret, registeredKind, storeSecret } from "./secret.ts";
+
+/** setup-token を擬似端末で動かす argv（`@aicoop/shared` に移した。準備の画面と同じもの） */
+export { setupTokenArgv };
 
 const SECRET_ID = "anthropic";
 /** 画面を消し、端末の履歴（スクロールで戻れる分）も消す */
 const CLEAR_SCREEN = "\x1b[H\x1b[2J\x1b[3J";
-
-function shellQuote(value: string): string {
-  return `'${value.replaceAll("'", "'\\''")}'`;
-}
-
-/** setup-token を擬似端末で動かす argv（Linux は util-linux、macOS は BSD の script） */
-export function setupTokenArgv(
-  platform: NodeJS.Platform,
-  script: string,
-  claude: string,
-): string[] {
-  return platform === "darwin"
-    ? [script, "-q", "/dev/null", claude, "setup-token"]
-    : [script, "-q", "-e", "-f", "-c", `${shellQuote(claude)} setup-token`, "/dev/null"];
-}
 
 export async function run(input: CommandInput): Promise<number> {
   const { home, out, err, ctx } = input;

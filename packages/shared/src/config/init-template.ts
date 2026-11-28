@@ -34,6 +34,9 @@ export function initTemplateFiles(dir: string = templatesDir()): InitTemplateFil
   return files.sort((a, b) => (a.target < b.target ? -1 : a.target > b.target ? 1 : 0));
 }
 
+/** 名前を決めずに作った雛形の会社の名前（`aicoop init`・`aicoop open`。準備の画面で変える。D-30） */
+export const DEFAULT_COMPANY_NAME = "わたしの会社";
+
 export interface InitValues {
   /** `c_` + ULID（7.1） */
   readonly companyId: string;

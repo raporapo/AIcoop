@@ -51,6 +51,10 @@ export type ApiErrorCode =
   | "invalid_state"
   /** 設定にエラーがある（reload・設定の画面の変更） */
   | "config_invalid"
+  /** この PC ではできない（claude・script がない、Windows でイメージを作るなど。準備の画面。SU-） */
+  | "unavailable"
+  /** Claude へのログインが失敗した（setup-token が失敗した・トークンを読み取れない。何も作っていない。5.14 の3の2） */
+  | "login_failed"
   /** 変更を作ったあとで、ファイル・資格が書き換えられた（設定・資格の画面。5.14 の4の4）。何も書いていない */
   | "conflict"
   | "internal"
@@ -652,4 +656,148 @@ export interface CreateSecretChangeResponse {
   readonly id: string;
   readonly summary: SecretChangeSummary;
   readonly expires_at: string;
+}
+
+// ---- 準備の画面（5.14 の3。PC のブラウザのセッションだけ） ----
+
+/** 準備の確認の1項目（`aicoop check` の「準備の確認」と同じ形） */
+export interface SetupItem {
+  /** `secret:anthropic`・`placeholder:your-org`・`image:base`・`os:kvm`・`company:name` など */
+  readonly id: string;
+  readonly ok: boolean;
+  readonly message: string;
+  /** 用意のしかた（ok でないとき） */
+  readonly hint?: string;
+}
+
+/** 準備の画面の段階（この順に進める。5.14 の3の1〜4） */
+export type SetupStepId = "company" | "claude" | "github" | "image";
+
+export const SETUP_STEP_IDS: readonly SetupStepId[] = ["company", "claude", "github", "image"];
+
+export interface SetupStep {
+  readonly id: SetupStepId;
+  /** その段階の項目がすべて ok */
+  readonly ok: boolean;
+  readonly items: readonly SetupItem[];
+}
+
+/** Claude へのログインの状態（5.14 の3の2） */
+export type ClaudeLoginState =
+  /** setup-token を起こして、ログイン用の URL を待っている */
+  | "starting"
+  /** URL を出した。コードの貼り付けを待っている */
+  | "waiting_code"
+  /** コードを渡した。トークンを待っている */
+  | "exchanging"
+  /** トークンを受け取り、資格の変更（署名を待つ）を作った */
+  | "done"
+  | "failed"
+  | "cancelled"
+  /** 始めてから10分たったので取り消した */
+  | "expired";
+
+export interface ClaudeLoginView {
+  readonly id: string;
+  readonly state: ClaudeLoginState;
+  /** ログイン用の URL（`waiting_code` のときだけ） */
+  readonly url: string | null;
+  readonly started_at: string;
+  /** 始めてから10分 */
+  readonly expires_at: string;
+  /** 失敗・取り消しの説明（利用者に見せる日本語。トークン・画面の中身は含めない） */
+  readonly message: string | null;
+  /** `done` のとき：資格 `anthropic`（`anthropic_oauth`）の変更。署名するまで資格は変わらない */
+  readonly change: CreateSecretChangeResponse | null;
+}
+
+/** `POST /setup/claude-login/{id}/code` */
+export interface ClaudeLoginCodeRequest {
+  readonly code: string;
+}
+
+/** 箱のイメージを作る状態（5.14 の3の4） */
+export type ImageBuildState = "running" | "succeeded" | "failed";
+
+export interface ImageBuildView {
+  readonly id: string;
+  readonly state: ImageBuildState;
+  /** いまの段階（`[1/2] ベースのイメージを作っています…` の 1・2 と文）。分からなければ null */
+  readonly stage: {
+    readonly index: number;
+    readonly total: number;
+    readonly label: string;
+  } | null;
+  /** ログの最後の行（`MAX_IMAGE_BUILD_LINES` 行まで） */
+  readonly lines: readonly string[];
+  readonly started_at: string;
+  readonly finished_at: string | null;
+  readonly message: string | null;
+}
+
+/** `GET /images/build` */
+export interface GetImageBuildResponse {
+  /** まだ作っていなければ null（daemon を起動してから） */
+  readonly build: ImageBuildView | null;
+}
+
+/** `GET /setup` */
+export interface SetupResponse {
+  /** 4つの段階がすべて済んだ */
+  readonly ready: boolean;
+  /** 会社の名前 → Claude → GitHub → イメージ の順 */
+  readonly steps: readonly SetupStep[];
+  /** どの段階にも入らない準備の確認（ほかのサービスの資格など） */
+  readonly others: readonly SetupItem[];
+  readonly company: { readonly name: string };
+  readonly github: {
+    /** 資格の ID（サービス github と同じ） */
+    readonly secret_id: string;
+    /** 登録されている資格の種類（なければ null） */
+    readonly secret_kind: SecretKindName | null;
+    /** groups.yaml の部署の上限に書いたリポジトリ（`your-org` を除く） */
+    readonly repositories: readonly string[];
+    /** groups.yaml に、雛形の `your-org` が残っている */
+    readonly placeholder: boolean;
+  };
+  readonly claude_login: ClaudeLoginView | null;
+  readonly image_build: ImageBuildView | null;
+}
+
+/** `POST /setup/company` */
+export interface SetupCompanyRequest {
+  readonly name: string;
+}
+
+/** `POST /setup/github/repositories` */
+export interface SetupRepositoriesRequest {
+  readonly repositories: readonly string[];
+}
+
+/** Claude へのログインを始めてから取り消すまで */
+export const CLAUDE_LOGIN_TTL_MS = 10 * 60 * 1000;
+/** 貼り付けるコードの長さの上限 */
+export const MAX_LOGIN_CODE_CHARS = 512;
+/** 会社の名前の長さの上限 */
+export const MAX_COMPANY_NAME_CHARS = 100;
+/** 準備の画面で一度に入れられるリポジトリの数 */
+export const MAX_SETUP_REPOSITORIES = 20;
+/** イメージを作るときに覚えておくログの行の数 */
+export const MAX_IMAGE_BUILD_LINES = 200;
+/** 1行の長さの上限（超えた分は切る） */
+export const MAX_IMAGE_BUILD_LINE_CHARS = 500;
+
+/** 雛形の GitHub のユーザー名・組織名（groups.yaml の `your-org/*`） */
+export const PLACEHOLDER_GITHUB_OWNER = "your-org";
+
+const REPOSITORY_PATTERN =
+  /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/(?:\*|(?!\.{1,2}$)[A-Za-z0-9._-]{1,100})$/;
+
+/**
+ * AI が触ってよいリポジトリの書き方か（`owner/repo` か `owner/*`）。`*\/*`・`../x`・空白・3区切り・
+ * 雛形の `your-org` は受け入れない（拒否側）
+ */
+export function isRepositoryPattern(value: string): boolean {
+  if (!REPOSITORY_PATTERN.test(value)) return false;
+  return value.split("/")[0]?.toLowerCase() !== PLACEHOLDER_GITHUB_OWNER;
 }
