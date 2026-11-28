@@ -167,6 +167,42 @@ describe("aicoop check の「準備の確認」（エラーにはしない）", 
     }
   });
 
+  it("5.1.8：Linux ではイメージを作る道具（mke2fs・cpio・lz4）を確かめ、足りないものと入れ方を言う", async () => {
+    const r = await cli.run(["check"]);
+    expect(r.stdout).toContain("mke2fs・cpio・lz4");
+    expect(r.stdout).toContain("sudo apt install e2fsprogs cpio lz4");
+    const some = createTestCli({
+      deps: { canAccess: () => true, which: (c) => (c === "lz4" ? null : `/usr/bin/${c}`) },
+    });
+    try {
+      await some.run(["init"]);
+      const items = JSON.parse((await some.run(["check", "--json"])).stdout).readiness as {
+        id: string;
+        ok: boolean;
+        message: string;
+        hint?: string;
+      }[];
+      const tools = items.find((x) => x.id === "os:image-tools");
+      expect(tools?.ok).toBe(false);
+      expect(tools?.message).toContain("lz4");
+      expect(tools?.message).not.toContain("cpio");
+      expect(tools?.hint).toContain("sudo apt install lz4");
+    } finally {
+      some.cleanup();
+    }
+    const all = createTestCli({ deps: { canAccess: () => true, which: (c) => `/usr/bin/${c}` } });
+    try {
+      await all.run(["init"]);
+      const items = JSON.parse((await all.run(["check", "--json"])).stdout).readiness as {
+        id: string;
+        ok: boolean;
+      }[];
+      expect(items.find((x) => x.id === "os:image-tools")?.ok).toBe(true);
+    } finally {
+      all.cleanup();
+    }
+  });
+
   it("daemon が動いていなければ aicoop start、動いていれば ✓", async () => {
     expect((await cli.run(["check"])).stdout).toContain("aicoop start");
     const fake = await startFakeDaemon(cli.home);
