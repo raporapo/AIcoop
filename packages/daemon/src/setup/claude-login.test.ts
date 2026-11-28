@@ -249,7 +249,33 @@ describe.skipIf(process.platform === "win32")(
           };
         },
       });
-      const started = await login.start();
+      let started: Awaited<ReturnType<ClaudeLogin["start"]>>;
+      try {
+        started = await login.start();
+      } catch (e) {
+        // 擬似端末を作れなかったときの手がかり（一時的な調べ）
+        const argv =
+          process.platform === "darwin"
+            ? [
+                script,
+                "-q",
+                "/dev/null",
+                "/bin/sh",
+                "-c",
+                'echo HELLO; stty -a; "$0" -e "process.stdin.setRawMode(true); console.log(\\"RAW OK\\")"',
+                process.execPath,
+              ]
+            : [script, "-q", "-e", "-f", "-c", "echo HELLO; stty -a", "/dev/null"];
+        const p = spawnPty(argv, process.env);
+        let out = "";
+        p.onData((c) => {
+          out += c.toString("utf8");
+        });
+        const code = await p.exited;
+        throw new Error(
+          `${e instanceof Error ? e.message : e}\n--- script の確かめ（終了コード ${code}）---\n${out}`,
+        );
+      }
       expect(started.url).toBe(URL);
       const done = await login.submitCode(started.id, GOOD_CODE);
       expect(done.state).toBe("done");
