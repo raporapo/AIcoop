@@ -211,9 +211,17 @@ describe("5.14 の3の2：Claude へのログイン（setup-token を擬似端�
     const e = await failure(make("ok", { platform: "win32" }).start());
     expect(e.code).toBe("unavailable");
   });
+
+  it("macOS では始めない（BSD の script は、端末のない daemon から擬似端末を作れない）。aicoop login を案内する", async () => {
+    const e = await failure(make("ok", { platform: "darwin" }).start());
+    expect(e.code).toBe("unavailable");
+    expect(e.message).toContain("aicoop login");
+    expect(spawned).toHaveLength(0);
+  });
 });
 
-describe.skipIf(process.platform === "win32")(
+// macOS の script は、標準入力が端末でないと「tcgetattr/ioctl: Operation not supported on socket」で終わる（CI で確かめた）
+describe.skipIf(process.platform !== "linux")(
   "5.14 の3の2：本物の script（擬似端末）で、偽の claude を動かす",
   () => {
     it("URL を読み取り、コードを渡して、トークンを受け取る", async () => {
