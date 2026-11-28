@@ -75,16 +75,18 @@ export function PairScreen({ code: initialCode }: { readonly code: string | null
             <span className="sr-only">{confirmCode.split("").join(" ")}</span>
           </p>
           <p>
-            PC の <code>aicoop pair --local</code> に出ている数字と同じか確かめて、ターミナルで{" "}
-            <kbd>y</kbd> を押してください。
+            PC の確かめの窓（スタートメニューの「AIcoop」から開いたときはメッセージボックス、
+            ターミナルでは <code>aicoop pair --local</code>・<code>aicoop open</code>
+            ）に出ている数字と同じか確かめて、「はい」（ターミナルでは <kbd>y</kbd>
+            ）を押してください。
           </p>
           <p className="notice notice-warn">
             <span aria-hidden="true">⚠ </span>
-            数字が違うときは、ターミナルで <kbd>n</kbd>{" "}
-            を押してください（ほかの誰かが登録しようとしているかもしれません）。
+            数字が違うときは「いいえ」（ターミナルでは <kbd>n</kbd>
+            ）を押してください（ほかの誰かが登録しようとしているかもしれません）。
           </p>
           <p>
-            y を押したら、<a href="#/pending">パスキーでログイン</a>してください。
+            「はい」を押したら、<a href="#/pending">パスキーでログイン</a>してください。
           </p>
         </section>
       </>

@@ -25,7 +25,27 @@ describe("ハッシュのルーター（サーバーのルートに依存しな�
     expect(parseRoute("#/host-tools")).toEqual({ name: "host-tools" });
     expect(parseRoute("#/ceo")).toEqual({ name: "ceo" });
     expect(parseRoute("#/pair")).toEqual({ name: "pair", code: null });
-    expect(parseRoute("#/pair?code=AB12-CD34")).toEqual({ name: "pair", code: "AB12-CD34" });
+    expect(parseRoute("#/pair?code=ABCDE-FGHJK")).toEqual({ name: "pair", code: "ABCDE-FGHJK" });
+  });
+
+  test("5.14 の2の3：#/pair?code= のコードは、ペアリングのコードの形（Crockford の base32 10文字）だけ受け取る", () => {
+    // aicoop open が出す形・打った形（ハイフンなし・小文字）は、表示の形（ABCDE-FGHJK）にそろえる
+    expect(parseRoute("#/pair?code=0123456789")).toEqual({ name: "pair", code: "01234-56789" });
+    expect(parseRoute("#/pair?code=abcde-fghjk")).toEqual({ name: "pair", code: "ABCDE-FGHJK" });
+    // 形が違うものは入れない（画面は開くが、コード欄は空）
+    for (const bad of [
+      "AB12-CD34", // 短い
+      "ABCDE-FGHJKM", // 長い
+      "ABCDE-FGHJI", // I は使わない
+      "ABCDE-FGHJU", // U は使わない
+      "ABCDE_FGHJK",
+      "ABCDE%20FGHJK",
+      "<script>",
+      "",
+      "ABCDEFGHJK".repeat(5),
+    ]) {
+      expect(parseRoute(`#/pair?code=${bad}`), bad).toEqual({ name: "pair", code: null });
+    }
   });
 
   test("ID の形でないもの・種類の違う ID は、見つからない画面（API に渡さない）", () => {
