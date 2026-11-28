@@ -66,6 +66,62 @@ export function mockFetch(): typeof fetch {
         const all = Array.from({ length: 30 }, (_, i) => auditEntry(i + 1));
         return json(200, { entries: all.filter((e) => e.seq > after).slice(0, limit) });
       }
+      // 設定の画面と資格の画面（5.14 の4・5）
+      case "GET /config/files":
+        return json(200, {
+          files: [
+            { path: "aicoop.yaml", size: 180, sha256: "a".repeat(64), modified_at: ME.expires_at },
+            { path: "groups.yaml", size: 420, sha256: "b".repeat(64), modified_at: ME.expires_at },
+            {
+              path: "prompts/company.md",
+              size: 64,
+              sha256: "c".repeat(64),
+              modified_at: ME.expires_at,
+            },
+          ],
+        });
+      case "GET /config/files/groups.yaml":
+        return json(200, {
+          path: "groups.yaml",
+          content: "groups:\n  dev:\n    name: 開発部\n    box: vm\n",
+          sha256: "b".repeat(64),
+        });
+      case "POST /config/changes": {
+        const body = JSON.parse(String(init?.body ?? "{}")) as {
+          files: Array<{ path: string; content: string; base_sha256: string | null }>;
+        };
+        const file = body.files[0];
+        return json(201, {
+          id: "x_01JQ0000000000000000000009",
+          summary: {
+            files: [
+              {
+                path: file?.path ?? "",
+                before_sha256: file?.base_sha256 ?? null,
+                after_sha256: "d".repeat(64),
+                diff: `--- a/${file?.path}\n+++ b/${file?.path}\n@@ -1,4 +1,4 @@\n groups:\n   dev:\n-    name: 開発部\n+    name: 開発本部\n     box: vm\n`,
+              },
+            ],
+          },
+          warnings: [
+            { code: "W-001", message: "役職の allow に、部署の ceiling にない操作があります" },
+          ],
+          expires_at: ME.expires_at,
+        });
+      }
+      case "GET /secrets":
+        return json(200, {
+          secrets: [
+            { id: "anthropic", kind: "anthropic_oauth", updated_at: ME.expires_at },
+            { id: "github", kind: "static_token", updated_at: ME.expires_at },
+          ],
+        });
+      case "POST /secrets/changes":
+        return json(201, {
+          id: "x_01JQ0000000000000000000008",
+          summary: { id: "github", kind: "static_token", action: "replace" },
+          expires_at: ME.expires_at,
+        });
       default:
         return json(404, {
           error: "not_found",

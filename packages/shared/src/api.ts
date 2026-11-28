@@ -12,6 +12,9 @@
  */
 import type { BoxKind } from "./box.ts";
 import type { ConfigIssue } from "./config-issue.ts";
+
+export type { ConfigIssue } from "./config-issue.ts";
+
 import type { TriggerKind } from "./scheduler.ts";
 import type { TaskStatus } from "./task-state.ts";
 

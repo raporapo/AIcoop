@@ -133,4 +133,24 @@ describe("API の呼び出し（9.2。承認アプリでの呼び出しはここ
       code: "bad_response",
     });
   });
+
+  test("5.14 の4の2：config_invalid の issues を、失敗に持たせる", async () => {
+    const issue = { code: "E-001", message: "ない役職です", source: "members.yaml" };
+    const f = fakeFetch(() =>
+      json(422, { error: "config_invalid", message: "エラーがあります", issues: [issue] }),
+    );
+    const failure = await createApiClient({ fetch: f.fetch })
+      .createConfigChange({ files: [] })
+      .catch((e: unknown) => e);
+    expect(failure).toBeInstanceOf(ApiFailure);
+    expect((failure as ApiFailure).issues).toEqual([issue]);
+    expect(f.calls[0]?.url).toBe("/api/v1/config/changes");
+  });
+
+  test("5.14 の4の1：ファイルのパスは / を残して、ほかを符号にする", async () => {
+    const f = fakeFetch(() => json(200, { path: "x", content: "", sha256: "" }));
+    const api = createApiClient({ fetch: f.fetch });
+    await api.getConfigFile("prompts/roles/implementer.md");
+    expect(f.calls[0]?.url).toBe("/api/v1/config/files/prompts/roles/implementer.md");
+  });
 });

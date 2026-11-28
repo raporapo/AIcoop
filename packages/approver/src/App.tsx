@@ -33,6 +33,8 @@ import { LoginScreen } from "./screens/LoginScreen.tsx";
 import { NewTaskScreen } from "./screens/NewTaskScreen.tsx";
 import { PairScreen } from "./screens/PairScreen.tsx";
 import { PendingScreen } from "./screens/PendingScreen.tsx";
+import { SecretsScreen } from "./screens/SecretsScreen.tsx";
+import { SettingsScreen } from "./screens/SettingsScreen.tsx";
 import { StatusScreen } from "./screens/StatusScreen.tsx";
 import { TaskScreen } from "./screens/TaskScreen.tsx";
 import { UsageScreen } from "./screens/UsageScreen.tsx";
@@ -300,6 +302,9 @@ const NAV_ITEMS: ReadonlyArray<{
   { href: "#/devices", label: "端末", match: ["devices"] },
   { href: "#/host-tools", label: "ホストの道具", match: ["host-tools"] },
   { href: "#/ceo", label: "CEO に頼む", match: ["ceo"] },
+  // 5.14 の4・5（PC のブラウザだけ）
+  { href: "#/settings", label: "設定", match: ["settings"] },
+  { href: "#/secrets", label: "資格", match: ["secrets"] },
 ];
 
 function Nav({ route }: { route: Route }) {
@@ -358,6 +363,10 @@ function RoutedScreen({ route }: { route: Route }) {
       return <LaterScreen kind="host-tools" />;
     case "ceo":
       return <LaterScreen kind="ceo" />;
+    case "settings":
+      return <SettingsScreen />;
+    case "secrets":
+      return <SecretsScreen />;
     case "pair":
       return <PairScreen code={route.code} />;
     case "not-found":

@@ -14,16 +14,24 @@ import type {
   ApprovalIntentRequest,
   ApprovalIntentResponse,
   CancelTaskResponse,
+  ConfigIssue,
+  CreateConfigChangeRequest,
+  CreateConfigChangeResponse,
+  CreateSecretChangeRequest,
+  CreateSecretChangeResponse,
   CreateTaskRequest,
   CreateTaskResponse,
+  GetConfigFileResponse,
   GetHoldResponse,
   GetTaskResponse,
   GrantStatusView,
   HoldStatus,
   ListAuditResponse,
+  ListConfigFilesResponse,
   ListDevicesResponse,
   ListGrantsResponse,
   ListHoldsResponse,
+  ListSecretsResponse,
   ListTasksResponse,
   LoginOptionsResponse,
   LoginVerifyRequest,
@@ -47,13 +55,29 @@ export class ApiFailure extends Error {
   /** HTTP のステータス。届かなければ 0 */
   readonly status: number;
   readonly code: FailureCode;
+  /** config_invalid のとき、設定の誤り（6.10。設定の画面で見せる） */
+  readonly issues: readonly ConfigIssue[] | undefined;
 
-  constructor(status: number, code: FailureCode, message: string) {
+  constructor(status: number, code: FailureCode, message: string, issues?: readonly ConfigIssue[]) {
     super(message);
     this.name = "ApiFailure";
     this.status = status;
     this.code = code;
+    this.issues = issues;
   }
+}
+
+/** 設定の誤りの形（daemon の ConfigIssue）。知らない形のものは捨てずに、読める欄だけ残す */
+function readIssues(value: unknown): ConfigIssue[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  return value
+    .filter((v): v is Record<string, unknown> => typeof v === "object" && v !== null)
+    .map((v) => ({
+      code: typeof v.code === "string" ? v.code : "?",
+      message: typeof v.message === "string" ? v.message : "",
+      ...(typeof v.source === "string" ? { source: v.source } : {}),
+      ...(typeof v.path === "string" ? { path: v.path } : {}),
+    })) as ConfigIssue[];
 }
 
 export const OFFLINE_MESSAGE =
@@ -132,7 +156,12 @@ export function createApiClient(options: ApiClientOptions = {}) {
     if (!res.ok) {
       if (res.status === 401 && !isAuthFree(path)) options.onUnauthorized?.();
       if (readable && isApiError(parsed)) {
-        throw new ApiFailure(res.status, parsed.error, parsed.message);
+        throw new ApiFailure(
+          res.status,
+          parsed.error,
+          parsed.message,
+          readIssues((parsed as { issues?: unknown }).issues),
+        );
       }
       throw new ApiFailure(
         res.status,
@@ -189,5 +218,16 @@ export function createApiClient(options: ApiClientOptions = {}) {
       get<ListAuditResponse>(`/audit${query({ after: opts.after, limit: opts.limit })}`),
     devices: () => get<ListDevicesResponse>("/devices"),
     revokeDevice: (id: string) => post<RevokeDeviceResponse>(`/devices/${seg(id)}/revoke`),
+
+    // ---- 設定の画面と資格の画面（5.14 の4・5。PC のブラウザだけ） ----
+    listConfigFiles: () => get<ListConfigFilesResponse>("/config/files"),
+    /** パスは `/` で区切ったまま、各段を符号にする（daemon は % を含むパスを受けない。形は画面で確かめてから渡す） */
+    getConfigFile: (path: string) =>
+      get<GetConfigFileResponse>(`/config/files/${path.split("/").map(seg).join("/")}`),
+    createConfigChange: (req: CreateConfigChangeRequest) =>
+      post<CreateConfigChangeResponse>("/config/changes", req),
+    listSecrets: () => get<ListSecretsResponse>("/secrets"),
+    createSecretChange: (req: CreateSecretChangeRequest) =>
+      post<CreateSecretChangeResponse>("/secrets/changes", req),
   };
 }
