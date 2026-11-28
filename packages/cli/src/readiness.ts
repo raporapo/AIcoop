@@ -36,7 +36,9 @@ function setHint(id: string, kind: SecretKind): string {
     case "google_oauth":
       return `aicoop secret set ${id} --kind google_oauth < google.json（client_id・client_secret・refresh_token の JSON）`;
     case "anthropic_oauth":
-      return `claude setup-token でトークンを作り、aicoop secret set ${id} --kind anthropic_oauth で貼り付ける`;
+      return id === "anthropic"
+        ? "aicoop login（ブラウザで Claude にログインすると登録されます）"
+        : `claude setup-token でトークンを作り、aicoop secret set ${id} --kind anthropic_oauth で貼り付ける`;
     case "static_token":
       return `aicoop secret set ${id} --kind static_token でトークンを貼り付ける`;
   }

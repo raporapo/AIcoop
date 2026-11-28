@@ -155,6 +155,9 @@ export function createTestCli(options: TestCliOptions = {}): TestCli {
     isProcessAlive: () => false,
     which: () => null,
     canAccess: () => false,
+    runInTerminal: async () => {
+      throw new Error("テストでは runInTerminal を差し込んでください");
+    },
     ...options.deps,
   };
 

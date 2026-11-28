@@ -139,27 +139,32 @@ function safeList(path: string) {
 }
 
 export async function runSet(input: CommandInput): Promise<number> {
-  const { home, positionals, values, out, err, ctx } = input;
+  const { home, positionals, values, ctx } = input;
   const id = checkId(positionals[0] ?? "");
   const kind = checkKind(String(values.kind ?? ""));
   requireInitialized(home);
+  const before = registeredKind(home, id);
+
+  const value = ctx.stdin.isTTY
+    ? await readPastedSecret(input, id, kind)
+    : parseInput(kind, (await readAll(ctx.stdin, MAX_INPUT_BYTES)).toString("utf8"));
+  storeSecret(input, id, kind, value, before);
+  return EXIT.ok;
+}
+
+/**
+ * 資格を保存し、監査ログに書き、結果を出す（secret set と login で使う）。
+ * before：もとから登録されていた種類（なければ undefined）
+ */
+export function storeSecret(
+  input: CommandInput,
+  id: string,
+  kind: SecretKind,
+  value: unknown,
+  before: SecretKind | undefined,
+): void {
+  const { home, out, ctx } = input;
   const paths = aicoopPaths(home);
-  const before = safeList(paths.secrets).find((s) => s.id === id);
-
-  let raw: string;
-  if (ctx.stdin.isTTY) {
-    err.line(
-      `資格 ${id}（${kind}）を貼り付けて、Enter を押してください。打った文字は画面に出ません。`,
-    );
-    err.line(err.style.dim(`  形：${SHAPES[kind]}`));
-    err.line(err.style.dim("  取りやめるときは Ctrl+C"));
-    err.write("> ");
-    raw = await readHidden(ctx.stdin, ctx.stderr, MAX_INPUT_BYTES);
-  } else {
-    raw = (await readAll(ctx.stdin, MAX_INPUT_BYTES)).toString("utf8");
-  }
-
-  const value = parseInput(kind, raw);
   try {
     setSecret(paths.secrets, id, kind, value, ctx.deps.now());
   } catch (e) {
@@ -180,10 +185,29 @@ export async function runSet(input: CommandInput): Promise<number> {
 
   const style = out.style;
   out.line(`${style.green("✓")} 資格 ${id}（${kind}）を${before ? "更新" : "登録"}しました`);
-  if (before && before.kind !== kind)
-    out.line(`    種類を ${before.kind} から ${kind} に変えました`);
+  if (before && before !== kind) out.line(`    種類を ${before} から ${kind} に変えました`);
   out.line(style.dim("    中身は画面に出していません。監査ログに記録しました（secret.change）"));
-  return EXIT.ok;
+}
+
+/** 登録されている資格の種類（なければ undefined） */
+export function registeredKind(home: string, id: string): SecretKind | undefined {
+  return safeList(aicoopPaths(home).secrets).find((s) => s.id === id)?.kind;
+}
+
+/** 貼り付けを、打った文字を出さずに読む（端末のとき） */
+export async function readPastedSecret(
+  input: CommandInput,
+  id: string,
+  kind: SecretKind,
+): Promise<unknown> {
+  const { err, ctx } = input;
+  err.line(
+    `資格 ${id}（${kind}）を貼り付けて、Enter を押してください。打った文字は画面に出ません。`,
+  );
+  err.line(err.style.dim(`  形：${SHAPES[kind]}`));
+  err.line(err.style.dim("  取りやめるときは Ctrl+C"));
+  err.write("> ");
+  return parseInput(kind, await readHidden(ctx.stdin, ctx.stderr, MAX_INPUT_BYTES));
 }
 
 export async function runList(input: CommandInput): Promise<number> {
@@ -202,7 +226,7 @@ export async function runList(input: CommandInput): Promise<number> {
   }
   if (entries.length === 0) {
     out.line("資格はまだ登録されていません。");
-    out.line("  Claude のトークン：aicoop secret set anthropic --kind anthropic_oauth");
+    out.line("  Claude のトークン：aicoop login（ブラウザで Claude にログインする）");
     out.line("  使うサービスの資格は、aicoop check で確かめられます");
     return EXIT.ok;
   }
