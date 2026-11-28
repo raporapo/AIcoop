@@ -46,6 +46,8 @@ export interface AicoopPaths {
   runManaged(runId: string): string;
   runLog(runId: string): string;
   holdFile(holdId: string): string;
+  /** 再送の結果の本文（先頭 1 MiB。5.2.6 の3） */
+  holdResponseFile(holdId: string): string;
 }
 
 function requireName(value: string, what: string): string {
@@ -93,5 +95,6 @@ export function aicoopPaths(home: string): AicoopPaths {
     runManaged: (r) => join(runDir(r), "managed"),
     runLog: (r) => join(runLogsDir, `${requireId(r, "run")}.jsonl`),
     holdFile: (h) => join(holdsDir, `${requireId(h, "hold")}.bin`),
+    holdResponseFile: (h) => join(holdsDir, `${requireId(h, "hold")}.response.bin`),
   };
 }

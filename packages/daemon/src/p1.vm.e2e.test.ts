@@ -522,7 +522,7 @@ describe.skipIf(!ENABLED)(
       console.log("[P1-3] 許可していないホスト（example.com）は 403、X-Aicoop-Decision: deny");
     });
 
-    it("5.3.1：道具ゲートに http://aicoop.internal/mcp で届き、セッションなしの JSON-RPC で initialize・tools/list・tools/call ができる。道具は report_result だけ", () => {
+    it("5.3.1：道具ゲートに http://aicoop.internal/mcp で届き、セッションなしの JSON-RPC で initialize・tools/list・tools/call ができる。道具は役職に見せるものだけ", () => {
       for (const box of [manualBox, cronBox]) {
         expect(box.status("mcp-initialize")).toBe("200");
         expect(box.json("mcp-initialize.body")).toMatchObject({
@@ -533,7 +533,12 @@ describe.skipIf(!ENABLED)(
         expect(box.status("mcp-initialized")).toBe("202");
         expect(box.status("mcp-list")).toBe("200");
         const list = box.json("mcp-list.body") as { result: { tools: { name: string }[] } };
-        expect(list.result.tools.map((t) => t.name)).toEqual(["report_result"]);
+        // P2 で list_my_holds・request_access が足された（review_decision は部長だけ）
+        expect(list.result.tools.map((t) => t.name)).toEqual([
+          "report_result",
+          "list_my_holds",
+          "request_access",
+        ]);
         expect(box.status("mcp-report")).toBe("200");
         const report = box.json("mcp-report.body") as {
           result: { isError?: boolean; content: { text: string }[] };
@@ -720,7 +725,7 @@ describe.skipIf(!ENABLED)(
       );
     });
 
-    it("5.3.1・5.2.7：本物の Claude Code（無効なトークン）でも、道具ゲート aicoop につながり、MCP の道具は mcp__aicoop__report_result だけが見える。Anthropic へは資格プロキシを通らない", () => {
+    it("5.3.1・5.2.7：本物の Claude Code（無効なトークン）でも、道具ゲート aicoop につながり、MCP の道具は aicoop の、役職に見せるものだけが見える。Anthropic へは資格プロキシを通らない", () => {
       const run = realClaude.runs[0];
       const lines = readFileSync(paths.runLog(run?.id as string), "utf8")
         .split("\n")
@@ -748,7 +753,12 @@ describe.skipIf(!ENABLED)(
       ]);
       const tools = Array.isArray(init?.tools) ? (init.tools as string[]) : [];
       const mcpTools = tools.filter((t) => t.startsWith("mcp__"));
-      expect(mcpTools).toEqual(["mcp__aicoop__report_result"]);
+      // P2 で、部長でない役職に list_my_holds・request_access が足された（review_decision は部長だけ）
+      expect([...mcpTools].sort()).toEqual([
+        "mcp__aicoop__list_my_holds",
+        "mcp__aicoop__report_result",
+        "mcp__aicoop__request_access",
+      ]);
       // T-3：WebSearch は資格プロキシを通らないので、道具の一覧に出ない（--disallowedTools と管理設定。V-8）
       expect(tools).not.toContain("WebSearch");
       console.log(`[V-8] 本物の Claude Code の道具：${tools.join(", ")}`);

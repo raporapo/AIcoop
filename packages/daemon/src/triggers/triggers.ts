@@ -1,8 +1,10 @@
 /**
- * トリガー（5.5.1、5.5.2、6.6）。P1 で動かすのは `cron` だけ（`manual` は API の `POST /tasks`）。
+ * トリガー（5.5.1、5.5.2、6.6）。動かすのは `cron` と `on_hold_resolved`（`manual` は API の `POST /tasks`）。
  *
  * - `cron`：`aicoop.yaml` の `timezone` で、`schedule` の時刻に `onCron` を呼ぶ。`enabled: false` は動かさない
- * - `github`（P3）・`on_hold_resolved`（P2）は、設定にあっても動かさない。`/status` では `enabled: false` で見せる
+ * - `on_hold_resolved`（P2）：タイマーはない。保留に結果が出たら `holds/resolved.ts` がタスクを作る。
+ *   ここでは `/status` に、動いているか（`enabled`）を見せるだけ
+ * - `github`（P3）は、設定にあっても動かさない。`/status` では `enabled: false` で見せる
  * - トリガーの社員が、この daemon で動かせない（`checkRunnableMember`）ものも動かさない
  *
  * 次の時刻は `nextCronRun`（設定の検証 E-007 と同じ読み方）で求め、タイマーで待つ。
@@ -41,7 +43,6 @@ export interface StartTriggersOptions {
 
 const PHASE: Readonly<Record<string, string>> = {
   github: "P3",
-  on_hold_resolved: "P2",
 };
 
 export function startTriggers(opts: StartTriggersOptions): TriggerSet {
@@ -98,6 +99,20 @@ export function startTriggers(opts: StartTriggersOptions): TriggerSet {
   };
 
   for (const trigger of config.triggers) {
+    // on_hold_resolved（P2）：タイマーはない。保留に結果が出たときに holds/resolved.ts がタスクを作る
+    if (trigger.type === "on_hold_resolved") {
+      if (!trigger.enabled) continue;
+      const check = opts.canRun(trigger.member);
+      if (!check.ok) {
+        logger.warn(
+          { trigger: trigger.id },
+          `on_hold_resolved のトリガーを動かしません：${check.message}`,
+        );
+        continue;
+      }
+      armed.add(trigger.id);
+      continue;
+    }
     if (trigger.type !== "cron") {
       if (trigger.enabled) {
         logger.warn(

@@ -40,6 +40,15 @@ export interface PrepareSecretsInput {
    * 実行を starting のまま止めないため（取り消しも、これを待つ）
    */
   readonly timeoutMs?: number;
+  /**
+   * GitHub App のインストールトークンの権限とリポジトリを、E(m) から決めずにこの値にする
+   * （保留の要約のために PR を読むときなど、制御サーバー自身が使うトークンを、より狭くする）
+   */
+  readonly githubScope?: {
+    readonly permissions: Readonly<Record<string, "read" | "write">>;
+    /** 名前（owner を除いたもの）。null なら絞らない */
+    readonly repositories: readonly string[] | null;
+  };
 }
 
 export interface PreparedSecrets {
@@ -223,10 +232,16 @@ async function issueGithubAppToken(
     );
   }
   const jwt = githubAppJwt(appId, value.private_key as string, input.now);
-  const repositories = githubRepositoriesFor(input.config, input.effective);
+  const repositories =
+    input.githubScope !== undefined
+      ? input.githubScope.repositories
+      : githubRepositoriesFor(input.config, input.effective);
   const body = {
-    permissions: githubPermissionsFor(input.config, input.effective),
-    ...(repositories === null ? {} : { repositories }),
+    permissions:
+      input.githubScope !== undefined
+        ? { ...input.githubScope.permissions }
+        : githubPermissionsFor(input.config, input.effective),
+    ...(repositories === null ? {} : { repositories: [...repositories] }),
   };
 
   const signal = AbortSignal.timeout(input.timeoutMs ?? ISSUE_TIMEOUT_MS);

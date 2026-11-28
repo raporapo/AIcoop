@@ -71,6 +71,8 @@ const DESIGN_TABLES: Record<string, string[]> = {
     "decided_by",
     "response_status",
     "response_path",
+    // P2 で足した列（版2）：結果が出た時刻（5.2.6 の4「前回の実行以降に結果が出たもの」）。設計書への記録待ち
+    "resolved_at",
   ],
   grants: [
     "id",
@@ -86,6 +88,8 @@ const DESIGN_TABLES: Record<string, string[]> = {
     "starts_at",
     "expires_at",
     "decided_by",
+    // P2 で足した列（版2）：部長のコメント（5.7.3 の2・5.7.1 の4）。設計書への記録待ち
+    "manager_comment",
   ],
   tickets: [
     "id",
