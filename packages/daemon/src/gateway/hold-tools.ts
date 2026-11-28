@@ -190,14 +190,17 @@ function listMyHoldsTool(ctx: HoldToolsContext): GatewayTool {
 // ---- request_access ----
 
 function requestAccessTool(ctx: HoldToolsContext): GatewayTool {
+  /** この実行の中で受け付けた申請の数（出しすぎの上限。holds/limits.ts） */
+  let requested = 0;
   return {
     name: "request_access",
     description:
       "一時権限を申請します。部署の上限の中の操作だけを、決めた時間だけ使えるように頼みます。すぐには効かず、部長のレビューとオーナーの承認のあとで使えるようになります（新しいサービスの資格が要るものは、次の実行から）。",
     inputSchema: requestAccessInputSchema(ctx.deps.config().aicoop.grants.max_hours),
     call: guarded(ctx, (args) => {
-      const outcome = requestAccess(ctx.deps, ctx.memberId, args);
+      const outcome = requestAccess(ctx.deps, ctx.memberId, args, { inRun: requested });
       if (!outcome.ok) return outcome;
+      requested += 1;
       return {
         ok: true,
         value: {

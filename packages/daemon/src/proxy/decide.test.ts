@@ -7,6 +7,7 @@ import { getHold } from "../db/holds.ts";
 import type { StateDb } from "../db/open.ts";
 import { grants } from "../db/schema.ts";
 import { listTasks } from "../db/tasks.ts";
+import { MAX_HOLDS_PER_DAY, MAX_HOLDS_PER_RUN } from "../holds/limits.ts";
 import { type AicoopPaths, aicoopPaths } from "../paths.ts";
 import {
   type CompanyFiles,
@@ -538,5 +539,98 @@ describe("5.2.5・5.2.6 の1：保留（hold）", () => {
       ["deny", "too_large_to_hold"],
       ["deny", "too_large_to_hold"],
     ]);
+  });
+
+  describe("保留の出しすぎ：1つの実行・1人の社員の直近24時間に、保留にできる数の上限", () => {
+    const mail = () => new TextEncoder().encode('{"raw":"VG86IGFAZXhhbXBsZS5jb20="}');
+    const holdsCount = () => listAuditLog(db).filter((r) => r.kind === "hold.state").length;
+
+    it("1つの実行で保留にできるのは MAX_HOLDS_PER_RUN（10）件まで。超えたら保留にせず 403（hold_limit）。本文も読まず、ファイル・記録・レビューのタスクも作らない", async () => {
+      expect(MAX_HOLDS_PER_RUN).toBe(10);
+      const config = loadTestCompany(paths.home, salesFiles(true));
+      const onRequest = handlerFor(config, "sales-mailer");
+      for (let i = 0; i < MAX_HOLDS_PER_RUN; i++) {
+        expect(await onRequest(send(mail()))).toMatchObject({ status: 428 });
+      }
+      expect(holdsCount()).toBe(MAX_HOLDS_PER_RUN);
+      const files = readdirSync(paths.holdsDir).length;
+      const reviews = listTasks(db).filter((t) => t.triggerKind === "review").length;
+      expect(reviews).toBe(MAX_HOLDS_PER_RUN);
+
+      let read = false;
+      const denied = await onRequest(
+        send(mail(), {
+          readBody: async () => {
+            read = true;
+            return mail();
+          },
+        }),
+      );
+      expect(denied).toMatchObject({ status: 403, headers: { "X-Aicoop-Decision": "deny" } });
+      expect(bodyOf(denied)).toEqual({
+        aicoop: "deny",
+        operation: "gmail.message.send",
+        reason: "hold_limit",
+      });
+      expect(read).toBe(false);
+      expect(holdsCount()).toBe(MAX_HOLDS_PER_RUN);
+      expect(readdirSync(paths.holdsDir)).toHaveLength(files);
+      expect(listTasks(db).filter((t) => t.triggerKind === "review")).toHaveLength(reviews);
+      expect(decisions().at(-1)).toMatchObject({ decision: "deny", reason: "hold_limit" });
+
+      // 別の実行なら、また保留にできる
+      expect(await handlerFor(config, "sales-mailer")(send(mail()))).toMatchObject({
+        status: 428,
+      });
+    });
+
+    it("1人の社員が直近24時間に保留にできるのは MAX_HOLDS_PER_DAY（30）件まで（実行をまたいで数える）。24時間たてば、また保留にできる", async () => {
+      expect(MAX_HOLDS_PER_DAY).toBe(30);
+      const config = loadTestCompany(paths.home, salesFiles(false));
+      for (let run = 0; run < MAX_HOLDS_PER_DAY / MAX_HOLDS_PER_RUN; run++) {
+        const onRequest = handlerFor(config, "sales-mailer");
+        for (let i = 0; i < MAX_HOLDS_PER_RUN; i++) {
+          expect(await onRequest(send(mail()))).toMatchObject({ status: 428 });
+        }
+        clock.advance(3600_000);
+      }
+      const next = handlerFor(config, "sales-mailer");
+      expect(bodyOf(await next(send(mail())))).toMatchObject({ reason: "hold_limit" });
+      expect(holdsCount()).toBe(MAX_HOLDS_PER_DAY);
+
+      // いちばん古い保留（最初の実行の分）からちょうど24時間は、まだ数える。過ぎたら、また保留にできる
+      clock.advance(21 * 3600_000);
+      expect(bodyOf(await next(send(mail())))).toMatchObject({ reason: "hold_limit" });
+      clock.advance(1);
+      expect(await next(send(mail()))).toMatchObject({ status: 428 });
+    });
+
+    it("同時に来ても上限を超えない：残り1件のところに2つ同時に来たら、1つだけ保留にし、もう1つは hold_limit（保存したファイルも消す）", async () => {
+      const config = loadTestCompany(paths.home, salesFiles(false));
+      const onRequest = handlerFor(config, "sales-mailer");
+      for (let i = 0; i < MAX_HOLDS_PER_RUN - 1; i++) await onRequest(send(mail()));
+      const files = readdirSync(paths.holdsDir).length;
+      const both = await Promise.all([onRequest(send(mail())), onRequest(send(mail()))]);
+      expect(both.map((d) => (d.action === "respond" ? d.status : 0)).sort()).toEqual([403, 428]);
+      expect(holdsCount()).toBe(MAX_HOLDS_PER_RUN);
+      expect(readdirSync(paths.holdsDir)).toHaveLength(files + 1);
+    });
+
+    it("拒否される側の確かめ：上限に達しても、許可された操作（allow）はそのまま通る", async () => {
+      const config = loadTestCompany(paths.home, salesFiles(false));
+      const onRequest = handlerFor(config, "sales-mailer");
+      for (let i = 0; i < MAX_HOLDS_PER_RUN; i++) await onRequest(send(mail()));
+      expect(bodyOf(await onRequest(send(mail())))).toMatchObject({ reason: "hold_limit" });
+      const draft = await onRequest(
+        request({
+          method: "POST",
+          host: "gmail.googleapis.com",
+          path: "/gmail/v1/users/me/drafts",
+          bodyBytes: 2,
+          readBody: async () => new TextEncoder().encode("{}"),
+        }),
+      );
+      expect(draft).toEqual({ action: "forward" });
+    });
   });
 });
