@@ -124,8 +124,13 @@ async function waitForTask(
     for (;;) {
       if (task.status !== last) {
         last = task.status;
+        // 5.4.6：利用枠で止まったら、再開する予定の時刻（再開予定時刻 + 60秒）を添える。そのあいだも待ち続ける
+        const retry =
+          task.status === "waiting_limit" && task.retry_at
+            ? `（${formatTime(task.retry_at, tz)} に再開する予定）`
+            : "";
         err.line(
-          `  ${formatTime(ctx.deps.now().toISOString(), tz, { timeOnly: true })} ${taskStatusLabel(task.status, err.style)}`,
+          `  ${formatTime(ctx.deps.now().toISOString(), tz, { timeOnly: true })} ${taskStatusLabel(task.status, err.style)}${retry}`,
         );
       }
       if (isTerminalTaskStatus(task.status)) break;

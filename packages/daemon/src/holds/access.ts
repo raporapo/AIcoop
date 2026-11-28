@@ -5,7 +5,8 @@
  * 2. `service.operation` が、その社員の部署（部長は役員室）の `ceiling` にない → outside_ceiling
  *    `params` が `ceiling` の範囲の外 → outside_ceiling
  * 3. `duration_hours` が `grants.max_hours` を超える → too_long
- * 4. 通れば一時権限を `pending_manager`（部長がいなければ `pending_owner`）で作り、部長にレビューのタスクを作る
+ * 4. 申請できる数の上限（1つの実行・1人の社員の直近24時間。`limits.ts`）を超えていれば daily_limit（9.3）
+ * 5. 通れば一時権限を `pending_manager`（部長がいなければ `pending_owner`）で作り、部長にレビューのタスクを作る
  *
  * `mode` は申請では決められない。`ceiling` の同じ操作の項目のうち、申請の範囲を含むものの `mode` を使う
  * （複数あって、どれかが hold なら hold。拒否側）。
@@ -25,6 +26,11 @@ import { createGrant, type Grant } from "../db/grants.ts";
 import { writeTransaction } from "../db/open.ts";
 import { hasUnsafeChar } from "../gateway/report-result.ts";
 import type { HoldDeps } from "./deps.ts";
+import {
+  accessRequestLimitHit,
+  MAX_ACCESS_REQUESTS_PER_DAY,
+  MAX_ACCESS_REQUESTS_PER_RUN,
+} from "./limits.ts";
 import { createGrantReviewTask, reviewerFor } from "./review.ts";
 import { grantSummaryOf } from "./views.ts";
 
@@ -38,7 +44,12 @@ export type AccessOutcome =
   | { readonly ok: true; readonly grant: Grant }
   | {
       readonly ok: false;
-      readonly code: "invalid_input" | "outside_ceiling" | "too_long" | "not_allowed";
+      readonly code:
+        | "invalid_input"
+        | "outside_ceiling"
+        | "too_long"
+        | "not_allowed"
+        | "daily_limit";
       readonly message: string;
     };
 
@@ -73,7 +84,17 @@ export function requestAccessInputSchema(maxHours: number) {
   } as const;
 }
 
-export function requestAccess(deps: HoldDeps, memberId: string, args: unknown): AccessOutcome {
+export interface RequestAccessOptions {
+  /** この実行の中で、すでに出した申請の数（道具ゲートが数える。一時権限の記録には実行の ID がない） */
+  readonly inRun?: number;
+}
+
+export function requestAccess(
+  deps: HoldDeps,
+  memberId: string,
+  args: unknown,
+  opts: RequestAccessOptions = {},
+): AccessOutcome {
   const config = deps.config();
   const member = resolveMember(config, memberId);
   if (member === undefined || member.role.id === "ceo") {
@@ -151,6 +172,13 @@ export function requestAccess(deps: HoldDeps, memberId: string, args: unknown): 
 
   const manager = reviewerFor(config, member.member.group);
   const grant = writeTransaction(deps.db, () => {
+    // 出しすぎ：作るのと同じトランザクションで数える（同時に来ても上限を超えない）
+    const hit = accessRequestLimitHit(deps.db, {
+      memberId: member.id,
+      inRun: opts.inRun ?? 0,
+      now: deps.now(),
+    });
+    if (hit !== null) return hit;
     const created = createGrant(deps.db, {
       memberId: member.id,
       service: a.service as string,
@@ -166,6 +194,20 @@ export function requestAccess(deps: HoldDeps, memberId: string, args: unknown): 
     }
     return created;
   });
+  if (grant === "run" || grant === "day") {
+    deps.logger?.warn(
+      { member: member.id, operation: opId, limit: grant },
+      "一時権限の申請の数が上限に達したので、受け付けませんでした（daily_limit）",
+    );
+    return {
+      ok: false,
+      code: "daily_limit",
+      message:
+        grant === "run"
+          ? `1回の実行で申請できるのは ${MAX_ACCESS_REQUESTS_PER_RUN} 件までです。これ以上は申請せず、要るものを報告に書いてください`
+          : `1日（直近24時間）に申請できるのは ${MAX_ACCESS_REQUESTS_PER_DAY} 件までです。これ以上は申請せず、要るものを報告に書いてください`,
+    };
+  }
   if (manager !== undefined) deps.onTaskCreated?.();
   deps.logger?.info(
     { member: member.id, grant: grant.id, operation: opId, hours: rawDuration },

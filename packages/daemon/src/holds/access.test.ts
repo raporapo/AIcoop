@@ -4,6 +4,7 @@ import { getGrant } from "../db/grants.ts";
 import { listTasks } from "../db/tasks.ts";
 import { createHoldTestEnv, type HoldTestEnv } from "../testing/holds.ts";
 import { requestAccess, subsumes } from "./access.ts";
+import { MAX_ACCESS_REQUESTS_PER_DAY, MAX_ACCESS_REQUESTS_PER_RUN } from "./limits.ts";
 
 let t: HoldTestEnv;
 beforeEach(() => {
@@ -154,6 +155,57 @@ describe("5.7.3 の1・2：request_access", () => {
         ok: false,
         code: "outside_ceiling",
       });
+    });
+  });
+
+  describe("申請の出しすぎ（9.3 の daily_limit）：1つの実行・1人の社員の直近24時間に、申請できる数の上限", () => {
+    const reviews = () => listTasks(t.db).filter((x) => x.triggerKind === "review").length;
+    const grants = () => listAuditLog(t.db).filter((r) => r.kind === "grant.state").length;
+
+    it("1つの実行で申請できるのは MAX_ACCESS_REQUESTS_PER_RUN（3）件まで。超えたら daily_limit で、一時権限もレビューのタスクも作らない", () => {
+      expect(MAX_ACCESS_REQUESTS_PER_RUN).toBe(3);
+      expect(requestAccess(t.deps, "dev-implementer", push(), { inRun: 2 }).ok).toBe(true);
+      const before = { reviews: reviews(), grants: grants() };
+      const denied = requestAccess(t.deps, "dev-implementer", push(), { inRun: 3 });
+      expect(denied).toMatchObject({ ok: false, code: "daily_limit" });
+      expect({ reviews: reviews(), grants: grants() }).toEqual(before);
+    });
+
+    it("1人の社員が直近24時間に申請できるのは MAX_ACCESS_REQUESTS_PER_DAY（10）件まで（実行をまたいで数える。却下されたものも数える）。24時間を過ぎれば、また申請できる", () => {
+      expect(MAX_ACCESS_REQUESTS_PER_DAY).toBe(10);
+      for (let i = 0; i < MAX_ACCESS_REQUESTS_PER_DAY; i++) {
+        expect(requestAccess(t.deps, "dev-implementer", push()).ok).toBe(true);
+        t.clock.advance(60_000);
+      }
+      expect(requestAccess(t.deps, "dev-implementer", push())).toMatchObject({
+        ok: false,
+        code: "daily_limit",
+      });
+      expect(grants()).toBe(MAX_ACCESS_REQUESTS_PER_DAY);
+      // いちばん古い申請から24時間を過ぎると、また申請できる
+      t.clock.advance(24 * 3600_000 - MAX_ACCESS_REQUESTS_PER_DAY * 60_000 + 1);
+      expect(requestAccess(t.deps, "dev-implementer", push()).ok).toBe(true);
+    });
+
+    it("拒否される側の確かめ：入力の誤り・上限の外の申請は、作らないので数えない。上限は社員ごと", () => {
+      for (let i = 0; i < 20; i++) {
+        requestAccess(t.deps, "dev-implementer", push({ duration_hours: 999 }));
+      }
+      expect(requestAccess(t.deps, "dev-implementer", push()).ok).toBe(true);
+      for (let i = 0; i < MAX_ACCESS_REQUESTS_PER_DAY - 1; i++) {
+        requestAccess(t.deps, "dev-implementer", push());
+      }
+      expect(requestAccess(t.deps, "dev-implementer", push())).toMatchObject({
+        code: "daily_limit",
+      });
+      // ほかの社員（営業部のメール作成AI）は、自分の分だけを数える
+      expect(
+        requestAccess(t.deps, "sales-mailer", {
+          service: "gmail",
+          operation: "message.read",
+          reason: "返信を読むため",
+        }).ok,
+      ).toBe(true);
     });
   });
 });

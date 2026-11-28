@@ -315,6 +315,8 @@ export function buildToolsAndRules(input: ToolsAndRulesInput): string {
     too_large_to_hold: "承認待ちにするには、本文が大きすぎます",
     hold_failed:
       "承認待ちにするために中身（下書き・Pull Request など）を確かめようとしましたが、できませんでした。下書きの ID・PR の番号が正しいかを確かめてください",
+    hold_limit:
+      "承認待ちにできる数の上限（1回の実行あたり・1日あたり）に達したので、承認待ちにしませんでした。続けて送らず、まだ送れていないものを報告に書いてください",
   };
   lines.push(
     "",

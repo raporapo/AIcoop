@@ -42,7 +42,12 @@ import {
 export type { ReportResult } from "./report-result.ts";
 
 /** 9.3 の道具ゲートのエラーのコード（P2 までに使うもの） */
-export type GatewayErrorCode = "invalid_input" | "not_allowed" | "outside_ceiling" | "too_long";
+export type GatewayErrorCode =
+  | "invalid_input"
+  | "not_allowed"
+  | "outside_ceiling"
+  | "too_long"
+  | "daily_limit";
 
 /** onReport がこれを投げたら、記録せずに not_allowed を返す（例：タスクがもう動いていない） */
 export class ReportRejectedError extends Error {

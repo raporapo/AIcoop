@@ -12,7 +12,9 @@
  *    hold → 要約を作り（5.7.1 の2。drafts/send の下書き・マージする PR は本物の資格で取りに行く）、
  *           リクエストを `state/holds/<hold_id>.bin` に保存し、保留を作って 428（5.2.5、5.2.6 の1）。
  *           部長がいれば、同じトランザクションで部長のレビューのタスクを作る（5.7.1 の1・2）。
- *           中身を確かめられなければ、保留にせず 403（`hold_failed`）
+ *           中身を確かめられなければ、保留にせず 403（`hold_failed`）。
+ *           保留にできる数の上限（1つの実行・1人の社員の直近24時間。`holds/limits.ts`）を超えたら、
+ *           本文を読む前に 403（`hold_limit`）
  *
  * 加えて、拒否側に倒す決まり：
  * - 実行が動いていない（Claude Code の起動前・終了後。箱を壊せずに残ったときも）ときは、何も送らない
@@ -40,6 +42,7 @@ import { activeGrantsFor } from "../db/grants.ts";
 import { createHold } from "../db/holds.ts";
 import { type StateDb, writeTransaction } from "../db/open.ts";
 import { encodeHoldFile, savedRequestFrom } from "../holds/hold-file.ts";
+import { holdLimitHit, MAX_HOLDS_PER_DAY, MAX_HOLDS_PER_RUN } from "../holds/limits.ts";
 import { prepareHold } from "../holds/prepare.ts";
 import { createHoldReviewTask, reviewerFor } from "../holds/review.ts";
 import type { AicoopPaths } from "../paths.ts";
@@ -96,6 +99,17 @@ export function createProxyHandler(
   const secretServices = new Set(
     ctx.config.services.filter((s) => s.secret !== null).map((s) => s.id),
   );
+  const logHoldLimit = (operation: string) =>
+    ctx.logger?.warn(
+      {
+        run: ctx.runId,
+        member: ctx.memberId,
+        operation,
+        per_run: MAX_HOLDS_PER_RUN,
+        per_day: MAX_HOLDS_PER_DAY,
+      },
+      "保留にできる数の上限に達したので、保留にしませんでした（hold_limit）",
+    );
 
   return async (req) => {
     const at = now();
@@ -157,6 +171,14 @@ export function createProxyHandler(
     }
 
     // hold（5.2.6 の1）
+    // 保留の出しすぎ（holds/limits.ts）：本文を読む・中身を取りに行く前に確かめる（作るときにもう一度）
+    const limitHit = () =>
+      holdLimitHit(ctx.db, { runId: ctx.runId, memberId: ctx.memberId, now: now() });
+    if (limitHit() !== null) {
+      audit("deny", op.id, "hold_limit", req.bodyBytes);
+      logHoldLimit(op.id);
+      return denyResponse(op.id, "hold_limit");
+    }
     if (req.bodyBytes !== null && req.bodyBytes > MAX_HOLD_BODY_BYTES) {
       audit("deny", op.id, "too_large_to_hold", req.bodyBytes);
       return denyResponse(op.id, "too_large_to_hold");
@@ -203,8 +225,11 @@ export function createProxyHandler(
     mkdirSync(ctx.paths.holdsDir, { recursive: true });
     writeFileSync(file, encodeHoldFile(toSave), { mode: 0o600 });
     const manager = reviewerFor(ctx.config, holdGroup);
+    let created: boolean;
     try {
-      writeTransaction(ctx.db, () => {
+      created = writeTransaction(ctx.db, () => {
+        // 中身を取りに行っているあいだに、同じ実行・同じ社員のほかの保留で上限に達した
+        if (limitHit() !== null) return false;
         const hold = createHold(ctx.db, {
           id: holdId,
           runId: ctx.runId,
@@ -226,10 +251,17 @@ export function createProxyHandler(
         if (manager !== undefined) {
           createHoldReviewTask(ctx, ctx.config, manager, hold, prepared.summary);
         }
+        return true;
       });
     } catch (e) {
       rmSync(file, { force: true });
       throw e;
+    }
+    if (!created) {
+      rmSync(file, { force: true });
+      audit("deny", op.id, "hold_limit", toSave.body.byteLength);
+      logHoldLimit(op.id);
+      return denyResponse(op.id, "hold_limit");
     }
     audit("hold", op.id, null, toSave.body.byteLength);
     ctx.logger?.info(
