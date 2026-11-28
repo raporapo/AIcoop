@@ -26,6 +26,8 @@ describe("ハッシュのルーター（サーバーのルートに依存しな�
     expect(parseRoute("#/ceo")).toEqual({ name: "ceo" });
     // 5.8 の4 (10)(11)・5.14 の4・5
     expect(parseRoute("#/settings")).toEqual({ name: "settings" });
+    expect(parseRoute("#/setup")).toEqual({ name: "setup" });
+    expect(parseRoute("#/setup/claude")).toMatchObject({ name: "not-found" });
     expect(parseRoute("#/secrets")).toEqual({ name: "secrets" });
     expect(parseRoute("#/settings/groups.yaml")).toMatchObject({ name: "not-found" });
     expect(parseRoute("#/pair")).toEqual({ name: "pair", code: null });

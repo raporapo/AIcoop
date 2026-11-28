@@ -884,3 +884,34 @@ pre.diff {
 .diff-figure {
   margin: 0;
 }
+
+/* 準備の画面（5.14 の3） */
+.setup-step {
+  margin: 24px 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.setup-items {
+  padding-left: 0;
+  list-style: none;
+}
+
+.setup-items li {
+  margin: 4px 0;
+}
+
+.setup-sub {
+  margin: 16px 0;
+}
+
+.button-link-primary {
+  display: inline-block;
+  min-height: 44px;
+  padding: 10px 16px;
+  border-radius: var(--radius);
+  background: var(--accent);
+  color: var(--accent-text);
+  font-weight: 700;
+  text-decoration: none;
+}

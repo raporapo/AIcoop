@@ -122,6 +122,74 @@ export function mockFetch(): typeof fetch {
           summary: { id: "github", kind: "static_token", action: "replace" },
           expires_at: ME.expires_at,
         });
+      // 準備の画面（5.14 の3）
+      case "GET /setup":
+        return json(200, {
+          ready: false,
+          steps: [
+            {
+              id: "company",
+              ok: false,
+              items: [
+                {
+                  id: "company:name",
+                  ok: false,
+                  message: "会社の名前が、雛形の「わたしの会社」のままです",
+                },
+              ],
+            },
+            {
+              id: "claude",
+              ok: true,
+              items: [
+                {
+                  id: "secret:anthropic",
+                  ok: true,
+                  message:
+                    "Claude（Anthropic）の資格（anthropic、anthropic_oauth）が登録されています",
+                },
+              ],
+            },
+            {
+              id: "github",
+              ok: false,
+              items: [
+                {
+                  id: "placeholder:your-org",
+                  ok: false,
+                  message: "雛形の「your-org」が残っています（groups.dev.ceiling.0）",
+                },
+              ],
+            },
+            {
+              id: "image",
+              ok: false,
+              items: [{ id: "image:base", ok: false, message: "vm の箱のイメージがありません" }],
+            },
+          ],
+          others: [],
+          company: { name: "わたしの会社" },
+          github: {
+            secret_id: "github",
+            secret_kind: "static_token",
+            repositories: [],
+            placeholder: true,
+          },
+          claude_login: null,
+          image_build: null,
+        });
+      case "POST /setup/claude-login":
+        return json(201, {
+          id: "6f0e2f6e-1d2a-4b9b-8f53-2a0f8d5c1e77",
+          state: "waiting_code",
+          url: "https://claude.ai/oauth/authorize?mock",
+          started_at: ME.expires_at,
+          expires_at: ME.expires_at,
+          message: null,
+          change: null,
+        });
+      case "GET /images/build":
+        return json(200, { build: null });
       default:
         return json(404, {
           error: "not_found",
