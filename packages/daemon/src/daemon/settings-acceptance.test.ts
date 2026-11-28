@@ -398,16 +398,17 @@ describe("5.14 の4：設定の変更を作り、署名してから保存する"
     expect(exists.status).toBe(409);
   });
 
-  it("5.14 の4の4：読み直しに失敗したら、書いたファイルを元に戻す", async () => {
-    // company.id は変えられない（読み直しが拒む）。検証は通るので、書いてから読み直しで失敗する
+  it("6.1・ST-8：company.id を変える変更は、作るときに 422 で拒む（変更は作らない）", async () => {
     const before = read("aicoop.yaml");
     const res = await editFile("aicoop.yaml", (t) =>
       t.replace(TEST_COMPANY.id, "c_01JD6V8X3S0Q5W7KQ9M2T4R6YC"),
     );
-    expect(res.status, res.text).toBe(201);
-    const sent = await signAndSend("config_change", res.json.id);
-    expect(sent.status, sent.text).toBe(422);
-    expect(sent.json.error).toBe("config_invalid");
+    expect(res.status, res.text).toBe(422);
+    expect(res.json.error).toBe("config_invalid");
+    expect(res.json.issues).toEqual([
+      expect.objectContaining({ code: "E-013", source: "aicoop.yaml", path: "company.id" }),
+    ]);
+    expect(res.json.id).toBeUndefined();
     expect(read("aicoop.yaml")).toBe(before);
     const status = await bearer({ path: "/status" });
     expect(status.json.company.id).toBe(TEST_COMPANY.id);

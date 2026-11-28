@@ -9,6 +9,7 @@ import {
   existsSync,
   mkdirSync,
   openSync,
+  readFileSync,
   statSync,
 } from "node:fs";
 import { homedir } from "node:os";
@@ -125,6 +126,33 @@ export const realDeps: CliDeps = {
     }
   },
   which,
+  launchDetached: (argv) =>
+    new Promise((resolve) => {
+      const [command, ...args] = argv;
+      if (command === undefined) return resolve(false);
+      try {
+        const child = spawn(command, args, {
+          detached: true,
+          stdio: "ignore",
+          windowsHide: true,
+          env: process.env,
+        });
+        child.once("spawn", () => {
+          child.unref();
+          resolve(true);
+        });
+        child.once("error", () => resolve(false));
+      } catch {
+        resolve(false);
+      }
+    }),
+  isWsl: () => {
+    try {
+      return /microsoft/i.test(readFileSync("/proc/version", "utf8"));
+    } catch {
+      return false;
+    }
+  },
   runInTerminal: (argv) =>
     new Promise((resolve) => {
       const [command, ...args] = argv;

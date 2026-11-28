@@ -50,6 +50,13 @@ export interface CliDeps {
    * 端末の画面を使うコマンドを動かす（aicoop login の `script … claude setup-token`）。
    * 標準入力はそのまま渡し、出力は画面にそのまま出しながら、記録してメモリだけで返す
    */
+  /**
+   * ブラウザなどを開くコマンド（`xdg-open <url>` など）を、待たずに裏で起こす（aicoop open）。
+   * 起こせたら true。シェルは通さない
+   */
+  readonly launchDetached: (argv: readonly string[]) => Promise<boolean>;
+  /** WSL の中で動いているか（/proc/version に microsoft） */
+  readonly isWsl: () => boolean;
   readonly runInTerminal: (
     argv: readonly string[],
   ) => Promise<{ readonly exitCode: number | null; readonly output: string }>;

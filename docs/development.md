@@ -57,7 +57,7 @@ P1 の完了条件は設計書の第14章にある。OSに依存しない部品�
 - [x] P2 の完了条件 S-1・S-4（PR #19、`daemon/p2-acceptance.test.ts`）・S-5（PR #25、`daemon/s5-acceptance.test.ts`）を本物の daemon で通す。`aicoop holds`・`aicoop grants`、決まった保留のファイルの片付け、保留・申請の上限（PR #25）
 - [ ] V-7（`rate_limit_event` に使用率が入っているか）：本物のログインで確かめる（設計書 16章）
 - [ ] PC の画面での準備と設定（設計書 5.14、D-26〜D-30。2026-11-28 にオーナーが決定）
-  - [ ] ランチャーと `aicoop open`（5.14 の1・2）
+  - [x] ランチャーと `aicoop open`（5.14 の1・2。PR #31）
   - [x] 設定の画面と資格の画面（署名つきの変更。5.14 の4・5・6。daemon は PR #30、承認アプリは PR #32。受け入れ条件は `daemon/settings-acceptance.test.ts`）
   - [ ] 準備の画面（Claude へのログイン・GitHub・イメージ。5.14 の3）
 
@@ -389,6 +389,23 @@ P1 の完了条件は設計書の第14章にある。OSに依存しない部品�
 | FN-12 | 承認・却下の打ち間違い | `holds`・`grants`・`hold`・`grant` のあとの `approve`・`reject`・`accept`・`deny`・`sign`・`pass`・`decide` は、引数として読まず、承認アプリの案内で終了コード 2（何も送らない） | 9.1・P-4（AP-22 と同じ） |
 | FN-13 | `aicoop run --wait` と利用枠 | `waiting_limit` は終わりの状態ではないので待ち続け、「利用枠待ち（〜に再開する予定）」と出す | 再開すれば同じタスクが done になる |
 
+### ランチャーと aicoop open（PR #31）
+
+| # | 内容 | いまの実装 | 理由 |
+|---|---|---|---|
+| OP-1 | `aicoop open --launcher` の形 | 標準出力に1行1つの JSON（UTF-8、`\n`）。どの行にも `v: 1` と `event`。`progress {message}`・`open {url}`・`confirm {code, device_name}`・`done {url, device: {id, name} \| null}`・`cancelled {message}`・`error {message, hints}`。confirm のあとは標準入力から1行。前後の空白を除いて `yes` の行だけが「はい」で、ほかの行・改行のない終わり・入力の終わり・中断はすべて取り消す。人向けの進み具合は標準エラー（色なし）。終了コードは CL-1 と同じ（いいえは 1、中断は 130） | 5.14 の2の4・D-29。ランチャーに TTY がない。拒否側 |
+| OP-2 | 自動起動を WSL の中で動かす仕組み | `aicoop start --autostart` を足した（リポジトリの sh は置かない）。タスクは `conhost.exe --headless wsl.exe --cd ~ [-d <distro>] [-u <user>] -e aicoop start --autostart`（ランチャーも `--cd ~`。Windows のフォルダへ移ろうとして出る警告を避ける）。設定がなければ何もせず（フォルダも作らない）、動いていれば何もせず（ログも書かない）、そうでなければ起動して `logs/autostart.log` に時刻と結果を足す | リポジトリの置き場所に依らず、`aicoop` が PATH にあれば動く。conhost の `--headless` で窓を出さない（いまのタスクと同じ） |
+| OP-3 | WSL の中の `aicoop` の置き場所 | `wsl -e` は `.profile` を読まないので、`/usr/local/bin/aicoop`（node を絶対パスで呼ぶ sh）に置く。install.ps1 は `wsl -e sh -c "command -v aicoop"` で確かめ、なければ入れ方を出して止める | ランチャー・自動起動と同じ PATH で確かめる |
+| OP-4 | 「有効な端末」 | `GET /devices` の `revoked_at` が null のもの。取り消した端末しかなければ登録から | 5.14 の2の3 |
+| OP-5 | 設定が途中まであるとき | aicoop.yaml がないのに、ほかの雛形・state.db・secrets.json があれば、雛形を作らずに止める（エラー） | `aicoop init` と同じ考え（会社の ID が変わる・上書きしない） |
+| OP-6 | 端末がなく、TTY でも `--launcher` でもないとき | 登録を始めずに使い方の誤り（2）。端末があれば TTY でなくても `/app/` を出す | 確認コードを見比べる人がいない（`aicoop pair --local` と同じ） |
+| OP-7 | 開く URL | `http://localhost:<daemon.json のポート>/app/`、登録は `…/app/#/pair?code=<表示の形のコード>`（daemon の `url` は使わない）。`--launcher` ではブラウザを開かず、ランチャーが開く | パスキーは `localhost` でしか使えない（127.0.0.1 では使えない） |
+| OP-8 | ブラウザを開くコマンド | macOS `open`、WSL（/proc/version に microsoft）は `wslview`（なければ開かない）、ほかの Linux は `xdg-open`、Windows で直接動かしたときは開かない。シェルを通さず、URL は引数1つ。開けなくても失敗にせず、URL を出す | 5.14 の1。WSL で xdg-open を使うと、ブラウザのない Linux 側で失敗しうる |
+| OP-9 | 承認アプリの `#/pair?code=` | daemon のコードの形（Crockford の base32 10文字。ハイフン・小文字は許す）だけを受け取り、`ABCDE-FGHJK` にそろえて入れる。形が違えば空にする（UI-15 を狭めた）。確認コードの画面の文言を、ランチャーの「はい」でも分かるようにした | 5.14 の2の3。拒否側 |
+| OP-10 | 確認コードの形 | 6桁の数字でなければ、聞かずに取り消す（CLI・ランチャーの両方で確かめる）。端末の名前は制御文字・向きを変える文字を除いて出す | 確かめの窓を偽らせない |
+| OP-11 | ランチャーの守り | 開くのは `^http://localhost:<port>/app/` で始まる URL だけ（ほかは開かない）。確かめの窓は最前面で、はじめのボタンは「いいえ」。二重起動は Mutex `Local\AIcoop-Launcher`（2つめは「もう開いています」と出して終わる）。JSON を出さずに終わったら、終了コードと標準エラーの最後の8行を見せる | 乗っ取られた WSL の中から、任意のファイル・プログラムを開かせない。Enter だけで「はい」にしない（UI-11 と同じ） |
+| OP-12 | install.ps1 の細部 | ランチャーは `%LOCALAPPDATA%\AIcoop\` に写す（リポジトリを直接指さない。更新したら install.ps1 をやり直す）。ショートカットは `%APPDATA%\Microsoft\Windows\Start Menu\Programs\AIcoop.lnk`（最小化で起動）。タスクは今のユーザー・ログオン時・権限は制限つき・5分で打ち切り・重ねて動かさない・電池でも動かす。uninstall.ps1 はランチャーの写しも消す。.ps1 は UTF-8（BOM つき） | 管理者の権限なしで入れる。Windows PowerShell 5.1 は BOM のない .ps1 を ANSI として読み、日本語が化ける |
+
 ### 設定の画面と資格の画面（PR #30・#32）
 
 | # | 内容 | いまの実装 | 理由 |
@@ -400,7 +417,7 @@ P1 の完了条件は設計書の第14章にある。OSに依存しない部品�
 | ST-5 | 署名を待つ変更 | daemon のメモリの中だけ（daemon を起動し直すと消える）。作ってから10分で失効。期限内のものは設定・資格を合わせて同時に16件まで（超えたら 409 `invalid_state`）。ID は新しい接頭辞 `x_`（`IdKind` に `change` を足した。7.1 の表にない） | 資格の値を state.db に書かない。payload（2分）と同じくメモリに置く |
 | ST-6 | 検証のしかた | `loadConfig` に `overrides`（相対パス → 中身）を渡し、本物のファイルを書かずに、変えたファイルを重ねた全体を検証する。変更を作るときと、署名が通って書く直前の2回 | 6.10 と同じ検証を、一時ディレクトリに写さずに行う。変更に入っていないファイルが、作ったあとで壊れることがある |
 | ST-7 | 保存の順と失敗 | 署名が通ったら、`approvals` の記録と同じトランザクションの中で：①ファイルが base_sha256 のままか（違えば 409 `conflict`）②もう一度検証（422 `config_invalid`）③一時ファイルから rename で書く ④読み直す（`aicoop reload` と同じ）。読み直しに失敗したら書いたファイルを元に戻し（新しいファイルは消す。作ったフォルダは残す）422。どれかで失敗したら、`approvals` に記録せず、その変更も捨てる（作り直してもらう） | 5.14 の4の4。失敗した変更を、同じ署名で使い直させない |
-| ST-8 | `company.id` の変更 | 変更を作るときの検証は通り、書いたあとの読み直しで拒まれて元に戻る（422） | 読み直しの決まり（変えられない）を1か所にしておく |
+| ST-8 | `company.id` の変更 | 変更を作るとき（と、署名のあとに書く前）に、重ねた設定の `company.id` が動いている daemon のものと違えば 422 `config_invalid`（E-013、`aicoop.yaml` の `company.id`）で拒み、変更を作らない。読み直しでも同じく拒む | 6.2「変えてはならない」。書いてから戻すより、早く拒否側に倒す |
 | ST-9 | ApiErrorCode `conflict` | 新しく足した（409）。変更を作ったあとで、ファイル・資格が書き換えられたとき（作るときの base_sha256 が違うとき、新しいファイルのつもりがもうあるときも） | 9.2 のエラーの一覧にない |
 | ST-10 | 資格の書き換えの確かめ | 変更を作ったときの資格（種類・中身・更新日時）の SHA-256 をメモリに持ち、署名のあとに違えば 409 で書かない | 設定と同じく、あとから来た変更（CLI の `secret set` など）を黙って消さない |
 | ST-11 | 要約の形 | 設定：`{files: [{path, before_sha256, after_sha256, diff}]}`（新しいファイルは before_sha256 が null）。資格：`{id, kind, action}`（action は `create`・`replace`・`delete`。削除の kind はいま登録されている種類）。どちらも `kind` の欄（保留の要約の種類）は持たない | 5.14 の5「資格の ID・種類・登録か削除か」。置き換えと登録を分けて見せる |
