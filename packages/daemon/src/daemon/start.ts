@@ -5,7 +5,8 @@
  * 1. 設定を読む（エラーなら起動しない。`DaemonStartError` の `issues` に誤りを入れる。6.1・6.10）
  * 2. すでに同じ home で daemon が動いていれば起動しない（`runtime/daemon.json` の pid と `runtime/daemon.lock`）
  * 3. ログ（11.5）と state.db を開く → 監査ログ `config.load`（5.10）→ 再起動の後始末（8.6）
- *    → 保存期間を過ぎた監査ログ・ログを消す（5.10 の5、11.5。このあと1日1回）
+ *    → 保存期間を過ぎた監査ログ・ログ・決まった保留のファイルを消す（5.10 の5、11.5、`holds/prune.ts`。
+ *    このあと1日1回）
  * 4. ローカルAPI のトークン（ランダム、`runtime/api_token`、0600、起動ごとに作り直す。9.2）
  * 5. API を `127.0.0.1:<daemon.port>` で待ち受ける（4.3 の2）→ `runtime/daemon.json`
  * 6. トリガー（cron）→ 順番待ちのループ
@@ -42,6 +43,7 @@ import { openStateDb, type StateDb } from "../db/open.ts";
 import { recoverAfterRestart } from "../db/restart.ts";
 import type { HoldDeps } from "../holds/deps.ts";
 import { expireDue } from "../holds/expire.ts";
+import { pruneResolvedHoldFiles } from "../holds/prune.ts";
 import { recoverReplays } from "../holds/replay.ts";
 import { createHoldTargets } from "../holds/targets.ts";
 import { createDaemonLogger, type LineStream, pruneOldLogs } from "../log.ts";
@@ -281,6 +283,12 @@ export async function startDaemon(options: StartDaemonOptions): Promise<DaemonHa
         }
       } catch (error) {
         logger.error({ err: error }, "古いログを消せませんでした");
+      }
+      // 決まった保留の state/holds/<id>.bin・再送の結果のファイル（state.db の記録は残す）
+      try {
+        pruneResolvedHoldFiles({ db, paths, now, logger });
+      } catch (error) {
+        logger.error({ err: error }, "決まった保留のファイルを消せませんでした");
       }
     };
     maintenance();

@@ -1,10 +1,12 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:net";
 import { join } from "node:path";
+import { newId } from "@aicoop/shared";
 import { afterEach, describe, expect, it } from "vitest";
 import type { DaemonInfo } from "../api/contract.ts";
 import { appendAudit, listAuditLog, verifyAuditLog } from "../db/audit.ts";
+import { createHold, transitionHold } from "../db/holds.ts";
 import { openStateDb } from "../db/open.ts";
 import { createTask, getTask, listTasks, transitionTask } from "../db/tasks.ts";
 import { aicoopPaths } from "../paths.ts";
@@ -128,7 +130,6 @@ describe("aicoop daemon の起動（startDaemon）", () => {
     const existing = newCompany();
     const paths = aicoopPaths(existing.company.home);
     const dead = spawnSync(process.execPath, ["-e", ""]).pid;
-    const { mkdirSync } = await import("node:fs");
     mkdirSync(paths.runtimeDir, { recursive: true });
     writeFileSync(
       paths.daemonInfo,
@@ -169,7 +170,6 @@ describe("aicoop daemon の起動（startDaemon）", () => {
   it("8.6：起動したら、running のタスクは failed（error: daemon_restart）、starting のタスクは queued に戻してから順番待ちに入れる", async () => {
     const existing = newCompany();
     const paths = aicoopPaths(existing.company.home);
-    const { mkdirSync } = await import("node:fs");
     mkdirSync(existing.company.home, { recursive: true });
     const db = openStateDb(paths.stateDb);
     const base = {
@@ -199,7 +199,6 @@ describe("aicoop daemon の起動（startDaemon）", () => {
   it("8.6・6.1：前の制御サーバーが落ちて残った runtime/<run_id>/（mcp.json のゲートのトークンなど）を消す", async () => {
     const existing = newCompany();
     const paths = aicoopPaths(existing.company.home);
-    const { mkdirSync } = await import("node:fs");
     const { newId } = await import("@aicoop/shared");
     const stale = newId("run");
     mkdirSync(paths.runEtc(stale), { recursive: true });
@@ -277,7 +276,6 @@ describe("aicoop daemon の起動（startDaemon）", () => {
   it("11.5：起動時に、30日を過ぎたログ（logs/daemon-*.log・logs/runs/*.jsonl）を消す", async () => {
     const existing = newCompany();
     const paths = aicoopPaths(existing.company.home);
-    const { mkdirSync } = await import("node:fs");
     mkdirSync(paths.runLogsDir, { recursive: true });
     writeFileSync(join(paths.logsDir, "daemon-2020-01-01.log"), "{}\n");
     const t = await startTestDaemon({ existing });
@@ -287,6 +285,52 @@ describe("aicoop daemon の起動（startDaemon）", () => {
     expect(readdirSync(paths.logsDir).some((f) => /^daemon-\d{4}-\d{2}-\d{2}\.log$/.test(f))).toBe(
       true,
     );
+  });
+
+  it("片付け：1日1回、決まってから30日を過ぎた保留の state/holds/<id>.bin と再送の結果を消す。state.db の行は残る", async () => {
+    const clock = manualClock("2026-11-28T00:00:00.000Z");
+    const existing = newCompany();
+    const paths = aicoopPaths(existing.company.home);
+    const db = openStateDb(paths.stateDb, { now: clock.now });
+    const holdId = newId("hold", clock.now().getTime());
+    mkdirSync(paths.holdsDir, { recursive: true });
+    writeFileSync(paths.holdFile(holdId), "saved");
+    writeFileSync(paths.holdResponseFile(holdId), "response");
+    createHold(db, {
+      id: holdId,
+      runId: newId("run"),
+      taskId: newId("task"),
+      memberId: "dev-implementer",
+      groupId: "dev",
+      thread: "t",
+      service: "github",
+      operation: "pr.merge",
+      params: {},
+      requestPath: paths.holdFile(holdId),
+      requestBytes: 5,
+      summary: { kind: "default" },
+      status: "pending_owner",
+      expiresAt: "2026-12-01T00:00:00.000Z",
+    });
+    transitionHold(db, holdId, {
+      from: ["pending_owner"],
+      to: "rejected",
+      by: "system",
+      actor: "system",
+      decide: true,
+    });
+    db.close();
+
+    const t = await startTestDaemon({ existing, daemon: { now: clock.now, timers: clock } });
+    cleanups.push(() => t.daemon.stop());
+    // 起動したときは、まだ30日たっていない
+    expect(existsSync(paths.holdFile(holdId))).toBe(true);
+    clock.jump(30 * 24 * 3600_000);
+    expect(existsSync(paths.holdFile(holdId))).toBe(false);
+    expect(existsSync(paths.holdResponseFile(holdId))).toBe(false);
+    const res = await t.api({ path: `/holds/${holdId}` });
+    expect(res.status).toBe(200);
+    expect(res.json.hold).toMatchObject({ id: holdId, status: "rejected" });
   });
 
   it("handleSignals: true なら SIGINT・SIGTERM で止まり、止まったら登録を外す", async () => {
