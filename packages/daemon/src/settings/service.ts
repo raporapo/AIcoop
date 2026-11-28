@@ -82,6 +82,8 @@ export interface SettingsDeps {
   readonly db: StateDb;
   readonly logger: Logger;
   readonly now: () => Date;
+  /** 動いている daemon の会社 ID（aicoop.yaml の company.id。変更で変えさせない） */
+  companyId(): string;
   /** 変えたファイルを重ねた設定の全体を、daemon の起動・読み直しと同じ条件で検証する（6.10） */
   validate(overrides: ReadonlyMap<string, string>): ConfigResult;
   /** 書いたあとに読み直す（`aicoop reload` と同じ。actor は監査ログ `config.load` の者） */
@@ -190,6 +192,34 @@ export function createSettings(deps: SettingsDeps): Settings {
   const { home, secretsPath, db, logger, now } = deps;
   const pending = new Map<string, Pending>();
 
+  /**
+   * 変えたファイルを重ねて検証する（6.10）。さらに company.id が動いている daemon のものと同じか確かめる
+   * （6.2「変えてはならない」。読み直しでも拒まれるが、書く前に拒否側に倒す。ST-8）
+   */
+  const checkOverlay = (
+    overrides: ReadonlyMap<string, string>,
+  ):
+    | { readonly ok: true; readonly warnings: readonly ConfigIssue[] }
+    | { readonly ok: false; readonly issues: readonly ConfigIssue[] } => {
+    const result = deps.validate(overrides);
+    if (!result.ok) return result;
+    const current = deps.companyId();
+    if (result.config.aicoop.company.id !== current) {
+      return {
+        ok: false,
+        issues: [
+          {
+            code: "E-013",
+            source: "aicoop.yaml",
+            path: "company.id",
+            message: `company.id は変えられません（いまは ${current}）。もとに戻してください`,
+          },
+        ],
+      };
+    }
+    return { ok: true, warnings: result.warnings };
+  };
+
   const prune = () => {
     const t = now().getTime();
     for (const [id, p] of pending) if (p.expiresAt + KEEP_EXPIRED_MS < t) pending.delete(id);
@@ -277,7 +307,7 @@ export function createSettings(deps: SettingsDeps): Settings {
     }
     // 2. いまの設定に重ねて、もう一度検証する（変更に入っていないファイルが変わっていることがある）
     const overrides = new Map(p.files.map((f) => [f.path, f.content]));
-    const checked = deps.validate(overrides);
+    const checked = checkOverlay(overrides);
     if (!checked.ok) {
       pending.delete(p.id);
       throw new ApprovalFailure(
@@ -495,7 +525,7 @@ export function createSettings(deps: SettingsDeps): Settings {
       }
       if (files.length === 0) throw invalidInput("変えるファイルを1つ以上書いてください");
 
-      const checked = deps.validate(new Map(files.map((f) => [f.path, f.content])));
+      const checked = checkOverlay(new Map(files.map((f) => [f.path, f.content])));
       if (!checked.ok) {
         throw new ApprovalFailure(
           422,

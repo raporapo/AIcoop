@@ -472,6 +472,7 @@ export async function startDaemon(options: StartDaemonOptions): Promise<DaemonHa
       db,
       logger,
       now,
+      companyId: () => config.aicoop.company.id,
       validate: (overrides) => loadConfig(home, { now: now(), overrides }),
       reload: (actor) => reloadConfig(actor),
     });

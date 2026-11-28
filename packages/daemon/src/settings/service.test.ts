@@ -1,4 +1,5 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pino } from "pino";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -23,10 +24,15 @@ function failureOf(fn: () => unknown): ApprovalFailure {
   throw new Error("失敗しませんでした");
 }
 
-beforeEach(() => {
-  dir = tempDir();
-  mkdirSync(join(dir.path, "prompts"), { recursive: true });
-  writeFileSync(join(dir.path, "prompts", "company.md"), "# 方針\n");
+const COMPANY_ID = "c_01JD6V8X3S0Q5W7KQ9M2T4R6YB";
+
+/** 検証の偽物：aicoop.yaml の上書きに `id: <x>` があれば、その会社 ID の設定として通す */
+function fakeValidate(overrides: ReadonlyMap<string, string>) {
+  const id = /id: (c_\w+)/.exec(overrides.get("aicoop.yaml") ?? "")?.[1] ?? COMPANY_ID;
+  return { ok: true, warnings: [], config: { aicoop: { company: { id } } } } as never;
+}
+
+function make(reload: () => { ok: true } | { ok: false; issues: [] } = () => ({ ok: true })) {
   const mem = memoryDb();
   clock = mem.clock;
   logs = [];
@@ -36,12 +42,59 @@ beforeEach(() => {
     db: mem.db,
     logger: pino({ level: "debug", base: null }, { write: (l: string) => void logs.push(l) }),
     now: clock.now,
-    validate: () => ({ ok: true, warnings: [] }) as never,
-    reload: () => ({ ok: true }),
+    companyId: () => COMPANY_ID,
+    validate: fakeValidate,
+    reload,
   });
+}
+
+beforeEach(() => {
+  dir = tempDir();
+  mkdirSync(join(dir.path, "prompts"), { recursive: true });
+  writeFileSync(join(dir.path, "prompts", "company.md"), "# 方針\n");
+  writeFileSync(join(dir.path, "aicoop.yaml"), `company:\n  id: ${COMPANY_ID}\n`);
+  make();
 });
 
 afterEach(() => dir.cleanup());
+
+const sha = (text: string) => createHash("sha256").update(text).digest("hex");
+
+describe("5.14 の4：設定の変更", () => {
+  it("6.1・ST-8：company.id を変える変更は、作るときに 422 で拒む（変更を作らない）", () => {
+    const before = `company:\n  id: ${COMPANY_ID}\n`;
+    const failure = failureOf(() =>
+      settings.proposeConfigChange([
+        {
+          path: "aicoop.yaml",
+          content: "company:\n  id: c_01JD6V8X3S0Q5W7KQ9M2T4R6YC\n",
+          base_sha256: sha(before),
+        },
+      ]),
+    );
+    expect(failure.status).toBe(422);
+    expect(failure.code).toBe("config_invalid");
+    expect(failure.issues).toEqual([
+      expect.objectContaining({ code: "E-013", source: "aicoop.yaml", path: "company.id" }),
+    ]);
+    expect(readFileSync(join(dir.path, "aicoop.yaml"), "utf8")).toBe(before);
+  });
+
+  it("5.14 の4の4：書いたあとの読み直しに失敗したら、書いたファイルを元に戻す（新しいファイルは消す）", () => {
+    make(() => ({ ok: false, issues: [] }));
+    const change = settings.proposeConfigChange([
+      { path: "prompts/company.md", content: "# 新しい方針\n", base_sha256: sha("# 方針\n") },
+      { path: "prompts/roles/new.md", content: "# 新しい役職\n", base_sha256: null },
+    ]);
+    const target = settings.targets().config_change;
+    const failure = failureOf(() => target?.apply(change.id, "approve", "owner:d_x"));
+    expect(failure.status).toBe(422);
+    expect(readFileSync(join(dir.path, "prompts", "company.md"), "utf8")).toBe("# 方針\n");
+    expect(existsSync(join(dir.path, "prompts", "roles", "new.md"))).toBe(false);
+    // 失敗した変更は捨てる
+    expect(target?.describe(change.id)).toBeUndefined();
+  });
+});
 
 describe("5.14 の4・5：署名を待つ変更", () => {
   it(`同時に置けるのは ${MAX_PENDING_CHANGES} 件まで（期限を過ぎたものは数えない）`, () => {
