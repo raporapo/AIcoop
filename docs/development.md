@@ -57,7 +57,7 @@ P1 の完了条件は設計書の第14章にある。OSに依存しない部品�
 - [x] P2 の完了条件 S-1・S-4（PR #19、`daemon/p2-acceptance.test.ts`）・S-5（PR #25、`daemon/s5-acceptance.test.ts`）を本物の daemon で通す。`aicoop holds`・`aicoop grants`、決まった保留のファイルの片付け、保留・申請の上限（PR #25）
 - [ ] V-7（`rate_limit_event` に使用率が入っているか）：本物のログインで確かめる（設計書 16章）
 - [ ] PC の画面での準備と設定（設計書 5.14、D-26〜D-30。2026-11-28 にオーナーが決定）
-  - [x] ランチャーと `aicoop open`（5.14 の1・2。PR #??）
+  - [x] ランチャーと `aicoop open`（5.14 の1・2。PR #31）
   - [ ] 設定の画面と資格の画面（署名つきの変更。5.14 の4・5・6）
   - [ ] 準備の画面（Claude へのログイン・GitHub・イメージ。5.14 の3）
 
@@ -389,7 +389,7 @@ P1 の完了条件は設計書の第14章にある。OSに依存しない部品�
 | FN-12 | 承認・却下の打ち間違い | `holds`・`grants`・`hold`・`grant` のあとの `approve`・`reject`・`accept`・`deny`・`sign`・`pass`・`decide` は、引数として読まず、承認アプリの案内で終了コード 2（何も送らない） | 9.1・P-4（AP-22 と同じ） |
 | FN-13 | `aicoop run --wait` と利用枠 | `waiting_limit` は終わりの状態ではないので待ち続け、「利用枠待ち（〜に再開する予定）」と出す | 再開すれば同じタスクが done になる |
 
-### ランチャーと aicoop open（PR #??）
+### ランチャーと aicoop open（PR #31）
 
 | # | 内容 | いまの実装 | 理由 |
 |---|---|---|---|
