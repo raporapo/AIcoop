@@ -255,7 +255,7 @@ P1 の完了条件は設計書の第14章にある。OSに依存しない部品�
 | CL-8 | `aicoop init` の上書き | 一切しない。`--force` は設けない（付けたら説明して 2）。`--only-missing` で足りない雛形だけを作る。aicoop.yaml がないのに state.db か secrets.json があれば作らない（会社の ID が変わるため） | 設定・会社の ID・資格を消さない |
 | CL-9 | home の権限 | `init` が新しく作るときは 0700（Linux・macOS）。すでにあってほかのユーザーが読めるなら注意を出す | 本物の資格と state.db が入る |
 | CL-10 | 会社の名前 | 既定「わたしの会社」。改行・制御文字・向きを変える文字は不可、100文字まで | 承認アプリに出す表示名 |
-| CL-11 | `check` の「準備の確認」 | Anthropic と、設定で使うサービスの資格（種類も）、雛形の `your-org`、vm のイメージ（ベースと部署ごと、packages の足りないもの）、OS（Windows → WSL2、Linux → /dev/kvm、QEMU が PATH にあるか）、daemon（動いているか、`config_loaded_at` より新しい設定ファイルがあれば reload を案内） | 依頼の項目に、つまずきやすいもの（your-org・KVM・QEMU・読み直し忘れ）を足した |
+| CL-11 | `check` の「準備の確認」 | Anthropic と、設定で使うサービスの資格（種類も）、雛形の `your-org`、vm のイメージ（ベースと部署ごと、packages の足りないもの）、OS（Windows → WSL2、Linux → /dev/kvm、QEMU とイメージを作る道具 mke2fs・cpio・lz4 が PATH にあるか）、daemon（動いているか、`config_loaded_at` より新しい設定ファイルがあれば reload を案内） | 依頼の項目に、つまずきやすいもの（your-org・KVM・QEMU・読み直し忘れ）を足した |
 | CL-12 | `image build` の対象 | 引数なし：ベース（images/base）と、packages のある vm の部署（images/groups/&lt;id&gt;）。`--group` で packages がなければ作らない（ベースを使う）。Windows では作らない。`--claude-version` で版を指定 | 5.1.8 の2。**daemon（D）が images/groups/&lt;id&gt; があればそれを、なければ base を使う前提** |
 | CL-13 | `aicoop start` | 子は `aicoop daemon --background --home <home>`（logToStdout: false）。ログが始まる前の失敗は `logs/daemon-console.log`。約30秒待つ。すでに動いていれば 0。設定にエラーがあれば起こさない | 11.5 のログは daemon が書く |
 | CL-14 | `aicoop stop` | `POST /shutdown` のあと、API が止まるまで（約2分）、続いてプロセスが消えるまで（約15秒）待つ。動いていなければ 0 | 動いている実行を止めるのに時間がかかる |

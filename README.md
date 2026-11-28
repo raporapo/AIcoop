@@ -18,7 +18,13 @@
 ## 使い方（P1）
 
 必要なもの：Node.js 24 LTS、pnpm 11。vm の箱を動かすには、Linux（KVM が使えること）か macOS と、QEMU。
-Windows では、WSL2 の中で動かします（設計書 4.3）。
+Linux では、イメージを作る道具（`mke2fs`・`cpio`・`lz4`）も要ります（Debian・Ubuntu なら `sudo apt install qemu-system-x86 e2fsprogs cpio lz4`）。足りないものは `aicoop check` が教えます。
+
+Windows では、WSL2 の中で動かします（設計書 4.3。Windows 11 の WSL2 で箱が動くことを確かめました。16章 V-3）。
+
+1. 管理者のターミナルで `wsl --install` を実行し、再起動して、Ubuntu のユーザー名とパスワードを決める
+2. Ubuntu の中で、上の apt のパッケージと Node.js 24・pnpm 11 を入れ、`sudo usermod -aG kvm $USER` のあと、Windows 側で `wsl --shutdown` して開き直す
+3. リポジトリは Ubuntu の中（`~/AIcoop` など）に clone する。`/mnt/c/...`（Windows の C ドライブ）は読み書きが遅い。設定の置き場所（`AICOOP_HOME`）も `/mnt/c` に置かない（既定では `chmod 600` が効かず、`secrets.json` の確かめ（E-008）で止まる）
 
 ```sh
 git clone https://github.com/raporapo/AIcoop.git && cd AIcoop

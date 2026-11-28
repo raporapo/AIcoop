@@ -247,7 +247,32 @@ function osItems(ctx: CliContext): ReadinessItem[] {
               : `sudo apt install ${ctx.arch === "arm64" ? "qemu-system-arm" : "qemu-system-x86"}（Debian・Ubuntu の場合）`,
         },
   );
+  if (platform === "linux") items.push(imageToolsItem(ctx));
   return items;
+}
+
+/** aicoop image build（5.1.8）がホストで使う道具。GitHub のランナーには最初から入っているが、入れたての Ubuntu には無い */
+const IMAGE_TOOLS = [
+  { command: "mke2fs", aptPackage: "e2fsprogs" },
+  { command: "cpio", aptPackage: "cpio" },
+  { command: "lz4", aptPackage: "lz4" },
+] as const;
+
+function imageToolsItem(ctx: CliContext): ReadinessItem {
+  const missing = IMAGE_TOOLS.filter((t) => !ctx.deps.which(t.command));
+  if (missing.length === 0) {
+    return {
+      id: "os:image-tools",
+      ok: true,
+      message: `イメージを作る道具（${IMAGE_TOOLS.map((t) => t.command).join("・")}）があります`,
+    };
+  }
+  return {
+    id: "os:image-tools",
+    ok: false,
+    message: `イメージを作る道具（${missing.map((t) => t.command).join("・")}）が見つかりません。aicoop image build ができません`,
+    hint: `sudo apt install ${missing.map((t) => t.aptPackage).join(" ")}（Debian・Ubuntu の場合）`,
+  };
 }
 
 /** 設定ファイルのうち、いちばん新しい変更の時刻 */
