@@ -152,6 +152,29 @@ describe("aicoop run --wait：終わるまで待って結果を出す", () => {
     expect(r.stdout).toContain("box_start_failed");
   });
 
+  it("S-5・5.4.6：利用枠で止まったら（waiting_limit）、再開する予定の時刻を出して待ち続ける", async () => {
+    const states = ["running", "waiting_limit", "waiting_limit", "running", "done"] as const;
+    let i = 0;
+    daemon.on(`GET /tasks/${TASK_ID}`, () => {
+      const status = states[Math.min(i++, states.length - 1)] ?? "done";
+      return {
+        body: {
+          task: taskView({
+            status,
+            ...(status === "waiting_limit" && { retry_at: "2026-11-28T03:01:00.000Z" }),
+            ...(status === "done" && { result_summary: "続きから終えました" }),
+          }),
+          runs: [],
+        },
+      };
+    });
+    const r = await cli.run([...base, "--wait"]);
+    expect(r.code, r.stderr).toBe(0);
+    // 2026-11-28T03:01Z は JST の 12:01
+    expect(r.stderr).toContain("利用枠待ち（2026-11-28 12:01 に再開する予定）");
+    expect(r.stdout).toContain("続きから終えました");
+  });
+
   it("Ctrl+C で待つのをやめる（タスクは続く。終了コード 130）", async () => {
     daemon.on(`GET /tasks/${TASK_ID}`, {
       body: { task: taskView({ status: "running" }), runs: [] },

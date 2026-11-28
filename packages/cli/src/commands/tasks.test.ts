@@ -136,6 +136,28 @@ describe("9.1 aicoop status：GET /status", () => {
     expect(r.stdout).toContain("W-002");
   });
 
+  it("S-5・5.4.6 の4：利用枠で止まっているときは、止まっていることと再開予定時刻を出す。再開予定時刻 + 60秒を過ぎていれば、もう始めていることを伝える", async () => {
+    const usage = (resets_at: string) =>
+      statusResponse({
+        usage: {
+          status: "rejected",
+          resets_at,
+          rate_limit_type: "five_hour",
+          utilization: null,
+          updated_at: "2026-11-27T23:30:00.000Z",
+        },
+      });
+    daemon.on("GET /status", { body: usage("2100-01-01T00:00:00.000Z") });
+    const blocked = (await cli.run(["status"])).stdout;
+    expect(blocked).toContain("止まっている（枠に達した）・2100-01-01 09:00 に戻る・five_hour");
+
+    daemon.on("GET /status", { body: usage("2020-01-01T00:00:00.000Z") });
+    const past = (await cli.run(["status"])).stdout;
+    expect(past).not.toContain("止まっている（枠に達した）");
+    expect(past).toContain("止まっていた");
+    expect(past).toContain("2020-01-01 09:00 に戻る予定");
+  });
+
   it("--json は応答をそのまま出す", async () => {
     daemon.on("GET /status", { body: statusResponse() });
     const r = await cli.run(["status", "--json"]);

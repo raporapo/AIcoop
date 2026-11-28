@@ -29,6 +29,7 @@ export const SECTION_TITLES: Readonly<Record<CommandSection, string>> = {
   daemon: "制御サーバー",
   secret: "資格",
   work: "仕事",
+  approval: "保留・一時権限（見るだけ。承認・却下は承認アプリで）",
   device: "承認アプリの端末",
   record: "記録",
 };
@@ -186,12 +187,16 @@ export const COMMANDS: readonly CommandDef[] = [
   {
     name: "status",
     section: "daemon",
-    summary: "全体の状態（箱・タスク・利用枠・トリガー・警告）",
+    summary: "全体の状態（箱・タスク・利用枠・承認待ち・トリガー・警告）",
     usage: ["status [--json]"],
+    description: [
+      "利用枠で止まっているときは、再開予定時刻を出します（その時刻 + 60秒まで、どのタスクも始めません）。",
+      "オーナーの承認待ちがあれば、件数と、承認アプリ（http://localhost:<daemon.port>/app/）を案内します。",
+    ],
     options: [json("状態")],
     positionals: [],
     examples: [{ command: "status", note: "いまの状態を見る" }],
-    related: ["tasks", "start"],
+    related: ["tasks", "holds", "grants", "start"],
     load: () => import("./commands/status.ts"),
   },
   {
@@ -397,6 +402,92 @@ export const COMMANDS: readonly CommandDef[] = [
     load: () => import("./commands/cancel.ts"),
   },
   {
+    name: "holds",
+    section: "approval",
+    summary: "保留（承認待ちの重い操作）の一覧・詳細",
+    usage: [
+      "holds [--status <状態>[,<状態>...]] [--limit <件数>] [--json]",
+      "holds <hold_id> [--full] [--json]",
+    ],
+    description: [
+      "AI社員の重い操作（メールの送信・PR のマージなど）は、送らずに保留になり、部長のレビューと",
+      "オーナーの承認のあとで1回だけ送られます（5.7.1）。ここでは見るだけです。",
+      "承認・却下は、承認アプリ（http://localhost:<daemon.port>/app/）でパスキーの署名で行います（P-4）。",
+      "",
+      "<hold_id> を書くと、要約・部長のコメント・状態・期限・元のリクエスト・再送の結果を出します。",
+      "元のリクエストの本文は、先頭だけを出します（--full で全部）。",
+      "",
+      "状態：pending_manager（部長のレビュー待ち）・pending_owner（オーナーの承認待ち）・",
+      "approved（承認済み・送信中）・replayed（送信済み）・replay_failed（送信に失敗）・",
+      "rejected（却下）・expired（期限切れ）",
+    ],
+    options: [
+      {
+        name: "status",
+        type: "string",
+        value: "<状態>",
+        description: "この状態の保留だけ（, で区切って複数）",
+      },
+      {
+        name: "limit",
+        type: "string",
+        value: "<件数>",
+        description: "表示する数（1〜500。既定：100）",
+      },
+      {
+        name: "full",
+        type: "boolean",
+        description: "詳細で、元のリクエストの本文・要約の本文・再送の結果を全部出す",
+      },
+      json("一覧・詳細"),
+    ],
+    positionals: [
+      { name: "hold_id", required: false, description: "保留の ID（h_ で始まる）。書けば詳細" },
+    ],
+    examples: [
+      { command: "holds --status pending_owner", note: "オーナーの承認を待っているもの" },
+      { command: "holds h_01JD6V8X3S0Q5W7KQ9M2T4R6YB", note: "1件の中身を確かめる" },
+      { command: "holds h_01JD6V8X3S0Q5W7KQ9M2T4R6YB --full", note: "送る本文を全部見る" },
+    ],
+    related: ["grants", "status", "pair"],
+    load: () => import("./commands/holds.ts"),
+  },
+  {
+    name: "grants",
+    section: "approval",
+    summary: "一時権限（AI社員の申請を含む）の一覧",
+    usage: ["grants [--status <状態>[,<状態>...]] [--limit <件数>] [--json]"],
+    description: [
+      "AI社員が request_access で申請した一時権限と、その状態です（5.7.3）。ここでは見るだけです。",
+      "承認・却下は、承認アプリ（http://localhost:<daemon.port>/app/）でパスキーの署名で行います（P-4）。",
+      "",
+      "状態：pending_manager（部長のレビュー待ち）・pending_owner（オーナーの承認待ち）・",
+      "active（有効）・rejected（却下）・expired（期限切れ）",
+    ],
+    options: [
+      {
+        name: "status",
+        type: "string",
+        value: "<状態>",
+        description: "この状態の一時権限だけ（, で区切って複数）",
+      },
+      {
+        name: "limit",
+        type: "string",
+        value: "<件数>",
+        description: "表示する数（1〜500。既定：100）",
+      },
+      json("一覧"),
+    ],
+    positionals: [],
+    examples: [
+      { command: "grants --status pending_owner", note: "オーナーの承認を待っている申請" },
+      { command: "grants --status active", note: "いま効いている一時権限" },
+    ],
+    related: ["holds", "status", "pair"],
+    load: () => import("./commands/grants.ts"),
+  },
+  {
     name: "pair",
     section: "device",
     summary: "承認アプリの端末を登録する（P2 は --local：この PC のブラウザ）",
@@ -492,6 +583,9 @@ export const SYNONYMS: Readonly<Record<string, string>> = {
   validate: "check",
   lint: "check",
   info: "status",
+  hold: "holds",
+  grant: "grants",
+  pending: "holds --status pending_owner",
   restart: "stop と aicoop start",
   serve: "daemon",
   "secret ls": "secret list",
@@ -528,6 +622,9 @@ const NO_APPROVAL_COMMAND: readonly string[] = [
   "承認アプリは、daemon が動いている PC のブラウザで http://localhost:<daemon.port>/app/ を開きます（端末の登録：aicoop pair --local）",
 ];
 
+/** 保留・一時権限のあとに続けて書かれそうな、承認・却下の言い方（`aicoop holds approve <id>` など） */
+const APPROVAL_WORDS = ["approve", "reject", "accept", "deny", "sign", "pass", "decide"] as const;
+
 export const NOT_COMMANDS: Readonly<Record<string, readonly string[]>> = {
   approve: NO_APPROVAL_COMMAND,
   reject: NO_APPROVAL_COMMAND,
@@ -535,6 +632,11 @@ export const NOT_COMMANDS: Readonly<Record<string, readonly string[]>> = {
   deny: NO_APPROVAL_COMMAND,
   sign: NO_APPROVAL_COMMAND,
   approvals: NO_APPROVAL_COMMAND,
+  ...Object.fromEntries(
+    ["holds", "grants", "hold", "grant"].flatMap((noun) =>
+      APPROVAL_WORDS.map((w) => [`${noun} ${w}`, NO_APPROVAL_COMMAND]),
+    ),
+  ),
 };
 
 export function findCommand(name: string): CommandDef | undefined {

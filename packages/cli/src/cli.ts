@@ -104,6 +104,9 @@ async function dispatch(
 
   let name = word;
   let rest = argv.slice(i + 1);
+  // ないコマンドを続けて書いたもの（aicoop holds approve <id>）は、引数として読まずに案内する（9.1・P-4）
+  const pair = rest[0] === undefined ? undefined : `${word} ${rest[0]}`;
+  if (pair !== undefined && Object.hasOwn(NOT_COMMANDS, pair)) throw unknownCommand(pair);
   if (Object.hasOwn(GROUPS, word)) {
     const sub = rest[0];
     if (sub === undefined || sub.startsWith("-")) {
