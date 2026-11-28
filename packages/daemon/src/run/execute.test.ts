@@ -1002,7 +1002,7 @@ describe("始められないときは、直し方の分かる日本語の error 
   it("Claude のログインの資格（anthropic）が無い", async () => {
     t.cleanup();
     t = createTestRunEnv({ anthropicToken: null });
-    await failsWith(/aicoop secret set anthropic --kind anthropic_oauth.*claude setup-token/);
+    await failsWith(/aicoop login.*aicoop secret set anthropic --kind anthropic_oauth/);
     expect(t.driver.boxes).toHaveLength(0);
   });
 

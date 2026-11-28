@@ -33,8 +33,7 @@ alias aicoop="node $PWD/packages/cli/bin/aicoop.ts"   # または、リポジト
 
 aicoop init --name "サンプル商会"   # ~/.aicoop に雛形を作る。次にすることが番号つきで出ます
 # ~/.aicoop/groups.yaml の your-org を、自分の GitHub のユーザー名か組織名に書き換える
-claude setup-token                  # Claude のトークンを作る
-aicoop secret set anthropic --kind anthropic_oauth            # 貼り付ける（画面には出ません）
+aicoop login                        # Claude にログインする（ブラウザが開く。トークンは AIcoop が受け取って保存。最初の1回だけ）
 aicoop secret set github --kind github_app < github-app.json  # GitHub App の資格
 #   （かんたんに試すなら、fine-grained の個人アクセストークンを --kind static_token で登録してもよい）
 aicoop check                        # 設定のエラー・警告と、動かす準備を確かめる

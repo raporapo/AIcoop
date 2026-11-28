@@ -125,6 +125,31 @@ export const realDeps: CliDeps = {
     }
   },
   which,
+  runInTerminal: (argv) =>
+    new Promise((resolve) => {
+      const [command, ...args] = argv;
+      const chunks: Buffer[] = [];
+      const child = spawn(command as string, args, {
+        stdio: ["inherit", "pipe", "inherit"],
+        env: process.env,
+      });
+      child.stdout.on("data", (chunk: Buffer) => {
+        process.stdout.write(chunk);
+        chunks.push(chunk);
+      });
+      let settled = false;
+      const finish = (exitCode: number | null) => {
+        if (settled) return;
+        settled = true;
+        const output = Buffer.concat(chunks);
+        resolve({ exitCode, output: output.toString("utf8") });
+        // 記録（トークンを含む）のバッファは0で埋める（返した文字列の写しは、GC まで残る）
+        output.fill(0);
+        for (const c of chunks) c.fill(0);
+      };
+      child.once("error", () => finish(null));
+      child.once("close", (code) => finish(code));
+    }),
   canAccess: (path) => {
     try {
       accessSync(path, constants.R_OK | constants.W_OK);

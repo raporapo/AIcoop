@@ -403,7 +403,7 @@ describe("5.4.1：Claude のログインのトークン", () => {
     const result = readAnthropicToken(secretsPath);
     expect(result.ok).toBe(false);
     expect(!result.ok && result.error).toMatch(
-      /aicoop secret set anthropic --kind anthropic_oauth.*claude setup-token/,
+      /aicoop login.*aicoop secret set anthropic --kind anthropic_oauth/,
     );
   });
 

@@ -47,8 +47,7 @@ describe("9.1 aicoop init：雛形と .gitignore を作り、company.id を発�
     expect(r.stdout).toContain("次にすること");
     const steps = [
       "your-org",
-      "claude setup-token",
-      "aicoop secret set anthropic --kind anthropic_oauth",
+      "aicoop login",
       "aicoop secret set github --kind github_app",
       "aicoop check",
       "aicoop image build",

@@ -333,7 +333,7 @@ export type AnthropicTokenResult =
   | { readonly ok: false; readonly error: string };
 
 const REGISTER_ANTHROPIC =
-  'aicoop secret set anthropic --kind anthropic_oauth で、claude setup-token で作ったトークンを登録してください（標準入力に {"token": "..."} を渡します）';
+  "aicoop login で Claude にログインしてください（トークンを持っているなら aicoop secret set anthropic --kind anthropic_oauth で登録できます）";
 
 /** 5.4.1：Claude のログインのトークン（資格 `anthropic`、種類 `anthropic_oauth`）を読む */
 export function readAnthropicToken(secretsPath: string): AnthropicTokenResult {

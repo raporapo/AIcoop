@@ -46,6 +46,13 @@ export interface CliDeps {
   readonly which: (command: string) => string | null;
   /** ファイルが読み書きできるか（/dev/kvm の確認） */
   readonly canAccess: (path: string) => boolean;
+  /**
+   * 端末の画面を使うコマンドを動かす（aicoop login の `script … claude setup-token`）。
+   * 標準入力はそのまま渡し、出力は画面にそのまま出しながら、記録してメモリだけで返す
+   */
+  readonly runInTerminal: (
+    argv: readonly string[],
+  ) => Promise<{ readonly exitCode: number | null; readonly output: string }>;
 }
 
 export interface CliContext {

@@ -91,7 +91,7 @@ describe("aicoop check の「準備の確認」（エラーにはしない）", 
     const r = await cli.run(["check"]);
     expect(r.code).toBe(0);
     expect(r.stdout).toContain("準備の確認");
-    expect(r.stdout).toContain("aicoop secret set anthropic --kind anthropic_oauth");
+    expect(r.stdout).toContain("aicoop login");
     expect(r.stdout).toContain("aicoop secret set github --kind github_app");
   });
 
