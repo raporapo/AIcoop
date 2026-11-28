@@ -85,6 +85,18 @@ export interface AuditDataMap {
   };
   /** 読み込んだ設定ファイルごとの SHA-256（ファイル名 → ハッシュ） */
   "config.load": { readonly files: Readonly<Record<string, string>> };
+  /**
+   * 設定の画面で変えたファイルの名前と、前後の SHA-256（5.14 の4の5。中身は書かない）。
+   * 新しく作ったファイルの before_sha256 は null。change は署名で決めた変更の ID
+   */
+  "config.change": {
+    readonly change: string;
+    readonly files: ReadonlyArray<{
+      readonly path: string;
+      readonly before_sha256: string | null;
+      readonly after_sha256: string;
+    }>;
+  };
   /** 資格のIDと、登録か削除か（中身は書かない） */
   "secret.change": { readonly secret_id: string; readonly change: "set" | "rm" };
   /** 部署、箱の種類、起動・停止 */

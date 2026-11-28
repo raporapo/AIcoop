@@ -1,19 +1,28 @@
 /**
  * 承認・ペアリング・ログインの失敗（5.8）。HTTP のステータスと `ApiErrorCode` を持つ。
- * `message` は利用者に見せる日本語（11.7）。中身に、署名・鍵・トークンを入れない。
+ * `message` は利用者に見せる日本語（11.7）。中身に、署名・鍵・トークン・資格を入れない。
  */
+import type { ConfigIssue } from "@aicoop/shared";
 import type { ApiErrorCode } from "@aicoop/shared/api";
 
-export type ApprovalFailureStatus = 400 | 401 | 403 | 404 | 409 | 413 | 415 | 500;
+export type ApprovalFailureStatus = 400 | 401 | 403 | 404 | 409 | 413 | 415 | 422 | 500;
 
 export class ApprovalFailure extends Error {
   override name = "ApprovalFailure";
   readonly status: ApprovalFailureStatus;
   readonly code: ApiErrorCode;
-  constructor(status: ApprovalFailureStatus, code: ApiErrorCode, message: string) {
+  /** config_invalid のとき（設定の画面の変更。5.14 の4の2） */
+  readonly issues: readonly ConfigIssue[] | undefined;
+  constructor(
+    status: ApprovalFailureStatus,
+    code: ApiErrorCode,
+    message: string,
+    issues?: readonly ConfigIssue[],
+  ) {
     super(message);
     this.status = status;
     this.code = code;
+    this.issues = issues;
   }
 }
 

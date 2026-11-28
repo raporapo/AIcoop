@@ -10,6 +10,8 @@ const KINDS: readonly [IdKind, string][] = [
   ["ticket", "k_"],
   ["approval", "a_"],
   ["device", "d_"],
+  // 5.14：設定・資格の画面の、署名を待つ変更（メモリだけ。state.db には入れない）
+  ["change", "x_"],
 ];
 
 // ID：種類を表す接頭辞 + ULID（7.1）
@@ -66,7 +68,7 @@ describe("isId・idKind", () => {
   describe("知らない接頭辞や壊れた ULID は偽にする", () => {
     const ulid = "01JD6V8X3S0Q5W7KQ9M2T4R6YB";
     it.each([
-      ["知らない接頭辞", `x_${ulid}`],
+      ["知らない接頭辞", `z_${ulid}`],
       ["接頭辞なし", ulid],
       ["接頭辞が大文字", `T_${ulid}`],
       ["区切りの _ がない", `t${ulid}`],

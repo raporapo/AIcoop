@@ -2,10 +2,13 @@
  * ローカルHTTP API（9.2）の形と、state.db の行からの変換。
  * 型そのものは `@aicoop/shared/api`（承認アプリからも読む）にあり、ここから同じものを出す。
  */
+
+import type { SecretKind } from "@aicoop/shared";
 import type {
   RunEndReason as ApiRunEndReason,
   UsageStatus as ApiUsageStatus,
   RunView,
+  SecretKindName,
   TaskView,
 } from "@aicoop/shared/api";
 import type { Run } from "../db/runs.ts";
@@ -18,8 +21,10 @@ export * from "@aicoop/shared/api";
 type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 const _endReason: Same<RunEndReason, ApiRunEndReason> = true;
 const _usage: Same<UsageStatus, ApiUsageStatus> = true;
+const _secretKind: Same<SecretKind, SecretKindName> = true;
 void _endReason;
 void _usage;
+void _secretKind;
 
 // ---- state.db の行から API の形へ ----
 

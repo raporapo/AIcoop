@@ -24,6 +24,12 @@ export interface LoadConfigOptions {
   readonly checkSecretsMode?: boolean;
   /** cron 式が一度でも起きるかを調べる基準の時刻（既定は今） */
   readonly now?: Date;
+  /**
+   * 本物のファイルの代わりに読む中身（home からの `/` 区切りの相対パス → UTF-8 の中身。5.14 の4の2）。
+   * 書き換える前に、変えたファイルを重ねた設定の全体を検証するときに使う。まだないファイルも足せる
+   * （6.1 の yaml・`services/<名前>.yaml`・`prompts/<...>.md`）。本物のファイルは読み書きしない
+   */
+  readonly overrides?: ReadonlyMap<string, string>;
 }
 
 /**
@@ -31,7 +37,7 @@ export interface LoadConfigOptions {
  */
 export function loadConfig(home: string, options: LoadConfigOptions = {}): ConfigResult {
   const root = resolve(home);
-  const reader = new Reader(root);
+  const reader = new Reader(root, options.overrides);
 
   const files: Record<string, unknown> = {};
   for (const name of CONFIG_FILE_NAMES) {
@@ -61,7 +67,12 @@ export function loadConfig(home: string, options: LoadConfigOptions = {}): Confi
     }
   }
   const ownerDir = join(root, "services");
-  for (const file of reader.listFiles(ownerDir, "services", ".yaml")) {
+  const ownerFiles = reader.withOverrides(
+    reader.listFiles(ownerDir, "services", ".yaml"),
+    "services/",
+    ".yaml",
+  );
+  for (const file of ownerFiles) {
     const relative = `services/${file}`;
     const content = reader.readHomeYaml(relative);
     if (content !== ABSENT && content !== FAILED) {
@@ -112,9 +123,31 @@ class Reader {
   readonly issues: ConfigIssue[] = [];
   readonly hashes: Record<string, string> = {};
   private readonly root: string;
+  private readonly overrides: ReadonlyMap<string, string>;
 
-  constructor(root: string) {
+  constructor(root: string, overrides: ReadonlyMap<string, string> = new Map()) {
     this.root = root;
+    this.overrides = overrides;
+  }
+
+  /** 上書きの中身（home からの相対パス）。なければ undefined */
+  private override(relative: string): Buffer | undefined {
+    const text = this.overrides.get(relative);
+    return text === undefined ? undefined : Buffer.from(text, "utf8");
+  }
+
+  /**
+   * フォルダの中のファイル名に、上書きで足すもの（`prefix` のすぐ下で `extension` で終わるもの）を足し、
+   * 名前の順に並べる
+   */
+  withOverrides(files: readonly string[], prefix: string, extension: string): string[] {
+    const names = new Set(files);
+    for (const key of this.overrides.keys()) {
+      if (!key.startsWith(prefix) || !key.endsWith(extension)) continue;
+      const name = key.slice(prefix.length);
+      if (!name.includes("/")) names.add(name);
+    }
+    return [...names].sort();
   }
 
   private fail(source: string, detail: string): void {
@@ -134,15 +167,20 @@ class Reader {
 
   /** home の下の YAML のファイル（`relative` は `/` 区切り）を読み、ハッシュを記録する */
   readHomeYaml(relative: string): unknown | typeof ABSENT | typeof FAILED {
-    return this.readYaml(join(this.root, relative), relative, relative);
+    return this.readYaml(join(this.root, relative), relative, relative, this.override(relative));
   }
 
   /**
    * YAML のファイルを読み、ハッシュを記録する。なければ ABSENT、読めなければ FAILED。
    * 中身が空のファイルは null になる。
    */
-  readYaml(path: string, source: string, hashKey: string): unknown | typeof ABSENT | typeof FAILED {
-    const bytes = this.readBytes(path, source);
+  readYaml(
+    path: string,
+    source: string,
+    hashKey: string,
+    override?: Buffer,
+  ): unknown | typeof ABSENT | typeof FAILED {
+    const bytes = override ?? this.readBytes(path, source);
     if (bytes === ABSENT || bytes === FAILED) return bytes;
     this.hashes[hashKey] = sha256(bytes);
     try {
@@ -208,13 +246,23 @@ class Reader {
           continue;
         }
         if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
-        const bytes = this.readBytes(path, `prompts/${relative}`);
+        const bytes =
+          this.override(`prompts/${relative}`) ?? this.readBytes(path, `prompts/${relative}`);
         if (bytes === ABSENT || bytes === FAILED) continue;
         this.hashes[`prompts/${relative}`] = sha256(bytes);
         prompts.set(relative, bytes.toString("utf8"));
       }
     };
     walk(dir, "");
+    // まだないファイルの上書き（5.14 の4：新しいプロンプト）
+    for (const [key, text] of this.overrides) {
+      if (!key.startsWith("prompts/") || !key.endsWith(".md")) continue;
+      const relative = key.slice("prompts/".length);
+      if (prompts.has(relative)) continue;
+      const bytes = Buffer.from(text, "utf8");
+      this.hashes[key] = sha256(bytes);
+      prompts.set(relative, text);
+    }
     return prompts;
   }
 

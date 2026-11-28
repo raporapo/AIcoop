@@ -21,6 +21,7 @@ import type { Server } from "node:http";
 import { resolve } from "node:path";
 import { createGondolinDriver } from "@aicoop/box-gondolin";
 import {
+  type AuditActor,
   type CompanyConfig,
   type ConfigIssue,
   type CronTriggerConfig,
@@ -51,6 +52,7 @@ import { aicoopPaths } from "../paths.ts";
 import { removeStaleRuntimeDirs } from "../run/runtime-files.ts";
 import type { BoxDrivers, RunEnvironment, StartRun } from "../run/types.ts";
 import { createTaskScheduler, type TaskScheduler } from "../scheduler/scheduler.ts";
+import { createSettings } from "../settings/service.ts";
 import { systemTimers, type TimerHandle, type Timers } from "../timers.ts";
 import { checkRunnableMember } from "../triggers/runnable.ts";
 import { createCronTask, startTriggers, type TriggerSet } from "../triggers/triggers.ts";
@@ -417,6 +419,65 @@ export async function startDaemon(options: StartDaemonOptions): Promise<DaemonHa
       void stop();
     };
 
+    // 設定を読み直す（aicoop reload・設定の画面の保存。actor は監査ログ config.load の者）
+    const reloadConfig = (actor: AuditActor): ReturnType<ApiControl["reload"]> => {
+      const result = loadConfig(home, { now: now() });
+      if (!result.ok) {
+        logger.warn(
+          { count: result.issues.length },
+          "設定にエラーがあるので、読み直しませんでした",
+        );
+        return { ok: false, issues: result.issues };
+      }
+      const next = result.config;
+      if (next.aicoop.company.id !== config.aicoop.company.id) {
+        const issue: ConfigIssue = {
+          code: "E-013",
+          source: "aicoop.yaml",
+          path: "company.id",
+          message: `company.id は変えられません（起動したときは ${config.aicoop.company.id}）。もとに戻してください`,
+        };
+        logger.warn("company.id が変わっているので、読み直しませんでした");
+        return { ok: false, issues: [issue] };
+      }
+      if (next.aicoop.daemon.port !== config.aicoop.daemon.port) {
+        logger.warn(
+          { port, configured: next.aicoop.daemon.port },
+          "daemon.port の変更は、制御サーバーを起動し直すまで効きません",
+        );
+      }
+      config = next;
+      warnings = result.warnings;
+      configLoadedAt = now().toISOString();
+      appendAudit(db, {
+        actor,
+        kind: "config.load",
+        subject: config.aicoop.company.id,
+        data: { files: config.fileHashes },
+      });
+      for (const w of warnings) {
+        logger.warn({ code: w.code, source: w.source, path: w.path }, w.message);
+      }
+      triggers.stop();
+      triggers = buildTriggers();
+      scheduler.kick();
+      logger.info("設定を読み直しました");
+      return { ok: true, warnings, files: config.fileHashes };
+    };
+
+    // 設定の画面と資格の画面（5.14 の4・5）。署名を待つ変更は、このプロセスのメモリの中だけ
+    const settings = createSettings({
+      home,
+      secretsPath: paths.secrets,
+      db,
+      logger,
+      now,
+      companyId: () => config.aicoop.company.id,
+      validate: (overrides) => loadConfig(home, { now: now(), overrides }),
+      reload: (actor) => reloadConfig(actor),
+    });
+    approvalTargets = { ...approvalTargets, ...settings.targets(), ...options.approvalTargets };
+
     const control: ApiControl = {
       db,
       paths,
@@ -439,56 +500,14 @@ export async function startDaemon(options: StartDaemonOptions): Promise<DaemonHa
       canRun,
       taskCreated: () => scheduler.kick(),
       handleFor: (taskId) => scheduler.handleFor(taskId),
-      reload() {
-        const result = loadConfig(home, { now: now() });
-        if (!result.ok) {
-          logger.warn(
-            { count: result.issues.length },
-            "設定にエラーがあるので、読み直しませんでした",
-          );
-          return { ok: false, issues: result.issues };
-        }
-        const next = result.config;
-        if (next.aicoop.company.id !== config.aicoop.company.id) {
-          const issue: ConfigIssue = {
-            code: "E-013",
-            source: "aicoop.yaml",
-            path: "company.id",
-            message: `company.id は変えられません（起動したときは ${config.aicoop.company.id}）。もとに戻してください`,
-          };
-          logger.warn("company.id が変わっているので、読み直しませんでした");
-          return { ok: false, issues: [issue] };
-        }
-        if (next.aicoop.daemon.port !== config.aicoop.daemon.port) {
-          logger.warn(
-            { port, configured: next.aicoop.daemon.port },
-            "daemon.port の変更は、制御サーバーを起動し直すまで効きません",
-          );
-        }
-        config = next;
-        warnings = result.warnings;
-        configLoadedAt = now().toISOString();
-        appendAudit(db, {
-          actor: "owner:cli",
-          kind: "config.load",
-          subject: config.aicoop.company.id,
-          data: { files: config.fileHashes },
-        });
-        for (const w of warnings) {
-          logger.warn({ code: w.code, source: w.source, path: w.path }, w.message);
-        }
-        triggers.stop();
-        triggers = buildTriggers();
-        scheduler.kick();
-        logger.info("設定を読み直しました");
-        return { ok: true, warnings, files: config.fileHashes };
-      },
+      reload: () => reloadConfig("owner:cli"),
       shutdown() {
         // 応答を返し終えてから止め始める
         setTimeout(() => void stop(), 0);
       },
       approvals,
       approverDir: options.approverDir ?? defaultApproverDir(),
+      settings,
     };
 
     server = createApiServer(createApiApp(control));
