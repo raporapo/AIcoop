@@ -5,8 +5,9 @@
  * - 部長のレビューも、役員室の箱で動く部長の実行（偽の Claude Code が review_decision を呼ぶ）で行う
  * - オーナーの承認は、承認アプリと同じ HTTP の流れ（端末の登録 → ログイン → 承認の意思 → 署名）で行う
  */
+import { createHash } from "node:crypto";
 import { join } from "node:path";
-import { EXTERNAL_TEXT_BEGIN } from "@aicoop/shared";
+import { canonicalJson, EXTERNAL_TEXT_BEGIN } from "@aicoop/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { aicoopPaths } from "../paths.ts";
 import { createStartRun } from "../run/execute.ts";
@@ -153,9 +154,28 @@ async function newTask(member: string, purpose: string, thread?: string) {
   return res.json.task.id as string;
 }
 
+/**
+ * 承認アプリと同じやり方で、画面に出す要約から summary_sha256 を作る（5.8 の3の3）。
+ * 保留は GET /holds/{id} の summary、一時権限は GET /grants の summary を表示する
+ */
+async function shownSummarySha256(type: "hold" | "grant", id: string): Promise<string> {
+  const summary =
+    type === "hold"
+      ? (await owner.get(`/holds/${id}`)).json.hold.summary
+      : ((await owner.get("/grants")).json.grants as Array<{ id: string; summary: unknown }>).find(
+          (g) => g.id === id,
+        )?.summary;
+  expect(summary, "画面に出す要約がある").toBeDefined();
+  return createHash("sha256").update(canonicalJson(summary)).digest("hex");
+}
+
 async function approve(type: "hold" | "grant", id: string) {
+  const shown = await shownSummarySha256(type, id);
   const intent = await owner.post("/approvals/intent", { type, id, decision: "approve" });
   expect(intent.status, intent.text).toBe(200);
+  // 5.8：承認アプリは、表示した要約と payload の summary_sha256 が合わなければ署名しない。
+  // daemon の作る値と、画面の側で作る値が一致することを、本物の API の応答で確かめる
+  expect(intent.json.payload.summary_sha256).toBe(shown);
   const response = owner.auth.getAssertion(intent.json.options);
   const body = { payload: intent.json.payload, response };
   const res = await owner.post("/approvals/assert", body);
