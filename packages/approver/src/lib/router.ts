@@ -24,10 +24,15 @@ function isId(value: string | undefined, prefix: string): value is string {
   return value !== undefined && new RegExp(`^${prefix}_[0-7][0-9A-HJKMNP-TV-Z]{25}$`).test(value);
 }
 
-/** ペアリングのコード：空白のない印字できる ASCII を 64 文字まで（それ以外は入れない） */
+/**
+ * ペアリングのコード（daemon の normalizePairingCode と同じ形：Crockford の base32 10文字。
+ * ハイフン・小文字は許す）。表示の形 `ABCDE-FGHJK` にそろえる。形が違えば入れない（5.14 の2の3）
+ */
 function pairCode(value: string | null): string | null {
-  if (value === null) return null;
-  return /^[\x21-\x7e]{1,64}$/.test(value) ? value : null;
+  if (value === null || value.length > 40) return null;
+  const v = value.replace(/-/g, "").toUpperCase();
+  if (!/^[0-9A-HJKMNP-TV-Z]{10}$/.test(v)) return null;
+  return `${v.slice(0, 5)}-${v.slice(5)}`;
 }
 
 export function parseRoute(hash: string): Route {

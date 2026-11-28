@@ -57,7 +57,7 @@ P1 の完了条件は設計書の第14章にある。OSに依存しない部品�
 - [x] P2 の完了条件 S-1・S-4（PR #19、`daemon/p2-acceptance.test.ts`）・S-5（PR #25、`daemon/s5-acceptance.test.ts`）を本物の daemon で通す。`aicoop holds`・`aicoop grants`、決まった保留のファイルの片付け、保留・申請の上限（PR #25）
 - [ ] V-7（`rate_limit_event` に使用率が入っているか）：本物のログインで確かめる（設計書 16章）
 - [ ] PC の画面での準備と設定（設計書 5.14、D-26〜D-30。2026-11-28 にオーナーが決定）
-  - [ ] ランチャーと `aicoop open`（5.14 の1・2）
+  - [x] ランチャーと `aicoop open`（5.14 の1・2。PR #31）
   - [ ] 設定の画面と資格の画面（署名つきの変更。5.14 の4・5・6）
   - [ ] 準備の画面（Claude へのログイン・GitHub・イメージ。5.14 の3）
 
@@ -388,6 +388,23 @@ P1 の完了条件は設計書の第14章にある。OSに依存しない部品�
 | FN-11 | 止まったままの利用枠の表示 | `rejected` のまま再開予定時刻 + 60秒を過ぎていたら、CLI は「止まっていた（再開予定時刻を過ぎたので、タスクを始めています）・〜に戻る予定でした」と出す。`usage_state` は書き換えない | `usage_state` は次の `rate_limit_event` まで `rejected` のまま。daemon はもうタスクを始めている |
 | FN-12 | 承認・却下の打ち間違い | `holds`・`grants`・`hold`・`grant` のあとの `approve`・`reject`・`accept`・`deny`・`sign`・`pass`・`decide` は、引数として読まず、承認アプリの案内で終了コード 2（何も送らない） | 9.1・P-4（AP-22 と同じ） |
 | FN-13 | `aicoop run --wait` と利用枠 | `waiting_limit` は終わりの状態ではないので待ち続け、「利用枠待ち（〜に再開する予定）」と出す | 再開すれば同じタスクが done になる |
+
+### ランチャーと aicoop open（PR #31）
+
+| # | 内容 | いまの実装 | 理由 |
+|---|---|---|---|
+| OP-1 | `aicoop open --launcher` の形 | 標準出力に1行1つの JSON（UTF-8、`\n`）。どの行にも `v: 1` と `event`。`progress {message}`・`open {url}`・`confirm {code, device_name}`・`done {url, device: {id, name} \| null}`・`cancelled {message}`・`error {message, hints}`。confirm のあとは標準入力から1行。前後の空白を除いて `yes` の行だけが「はい」で、ほかの行・改行のない終わり・入力の終わり・中断はすべて取り消す。人向けの進み具合は標準エラー（色なし）。終了コードは CL-1 と同じ（いいえは 1、中断は 130） | 5.14 の2の4・D-29。ランチャーに TTY がない。拒否側 |
+| OP-2 | 自動起動を WSL の中で動かす仕組み | `aicoop start --autostart` を足した（リポジトリの sh は置かない）。タスクは `conhost.exe --headless wsl.exe --cd ~ [-d <distro>] [-u <user>] -e aicoop start --autostart`（ランチャーも `--cd ~`。Windows のフォルダへ移ろうとして出る警告を避ける）。設定がなければ何もせず（フォルダも作らない）、動いていれば何もせず（ログも書かない）、そうでなければ起動して `logs/autostart.log` に時刻と結果を足す | リポジトリの置き場所に依らず、`aicoop` が PATH にあれば動く。conhost の `--headless` で窓を出さない（いまのタスクと同じ） |
+| OP-3 | WSL の中の `aicoop` の置き場所 | `wsl -e` は `.profile` を読まないので、`/usr/local/bin/aicoop`（node を絶対パスで呼ぶ sh）に置く。install.ps1 は `wsl -e sh -c "command -v aicoop"` で確かめ、なければ入れ方を出して止める | ランチャー・自動起動と同じ PATH で確かめる |
+| OP-4 | 「有効な端末」 | `GET /devices` の `revoked_at` が null のもの。取り消した端末しかなければ登録から | 5.14 の2の3 |
+| OP-5 | 設定が途中まであるとき | aicoop.yaml がないのに、ほかの雛形・state.db・secrets.json があれば、雛形を作らずに止める（エラー） | `aicoop init` と同じ考え（会社の ID が変わる・上書きしない） |
+| OP-6 | 端末がなく、TTY でも `--launcher` でもないとき | 登録を始めずに使い方の誤り（2）。端末があれば TTY でなくても `/app/` を出す | 確認コードを見比べる人がいない（`aicoop pair --local` と同じ） |
+| OP-7 | 開く URL | `http://localhost:<daemon.json のポート>/app/`、登録は `…/app/#/pair?code=<表示の形のコード>`（daemon の `url` は使わない）。`--launcher` ではブラウザを開かず、ランチャーが開く | パスキーは `localhost` でしか使えない（127.0.0.1 では使えない） |
+| OP-8 | ブラウザを開くコマンド | macOS `open`、WSL（/proc/version に microsoft）は `wslview`（なければ開かない）、ほかの Linux は `xdg-open`、Windows で直接動かしたときは開かない。シェルを通さず、URL は引数1つ。開けなくても失敗にせず、URL を出す | 5.14 の1。WSL で xdg-open を使うと、ブラウザのない Linux 側で失敗しうる |
+| OP-9 | 承認アプリの `#/pair?code=` | daemon のコードの形（Crockford の base32 10文字。ハイフン・小文字は許す）だけを受け取り、`ABCDE-FGHJK` にそろえて入れる。形が違えば空にする（UI-15 を狭めた）。確認コードの画面の文言を、ランチャーの「はい」でも分かるようにした | 5.14 の2の3。拒否側 |
+| OP-10 | 確認コードの形 | 6桁の数字でなければ、聞かずに取り消す（CLI・ランチャーの両方で確かめる）。端末の名前は制御文字・向きを変える文字を除いて出す | 確かめの窓を偽らせない |
+| OP-11 | ランチャーの守り | 開くのは `^http://localhost:<port>/app/` で始まる URL だけ（ほかは開かない）。確かめの窓は最前面で、はじめのボタンは「いいえ」。二重起動は Mutex `Local\AIcoop-Launcher`（2つめは「もう開いています」と出して終わる）。JSON を出さずに終わったら、終了コードと標準エラーの最後の8行を見せる | 乗っ取られた WSL の中から、任意のファイル・プログラムを開かせない。Enter だけで「はい」にしない（UI-11 と同じ） |
+| OP-12 | install.ps1 の細部 | ランチャーは `%LOCALAPPDATA%\AIcoop\` に写す（リポジトリを直接指さない。更新したら install.ps1 をやり直す）。ショートカットは `%APPDATA%\Microsoft\Windows\Start Menu\Programs\AIcoop.lnk`（最小化で起動）。タスクは今のユーザー・ログオン時・権限は制限つき・5分で打ち切り・重ねて動かさない・電池でも動かす。uninstall.ps1 はランチャーの写しも消す。.ps1 は UTF-8（BOM つき） | 管理者の権限なしで入れる。Windows PowerShell 5.1 は BOM のない .ps1 を ANSI として読み、日本語が化ける |
 
 ### 設定の画面と資格の画面（PR #30）
 

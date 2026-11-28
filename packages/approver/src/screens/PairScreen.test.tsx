@@ -57,12 +57,40 @@ describe("5.8 の2 端末の登録（aicoop pair --local：/pairing/options → 
     ]);
   });
 
-  test("URL のコード（#/pair?code=…）を入れておく", async () => {
+  test("5.14 の2の3：URL のコード（#/pair?code=…）を入れておく。端末の名前は打てるまま", async () => {
+    installFakeWebAuthn();
+    renderApp({ me: null, hash: "#/pair?code=ABCDE-FGHJK" });
+    expect(((await screen.findByLabelText("ペアリングのコード")) as HTMLInputElement).value).toBe(
+      "ABCDE-FGHJK",
+    );
+    const name = screen.getByLabelText(/この端末の名前/) as HTMLInputElement;
+    expect(name.value).toBe("");
+    expect(name.disabled || name.readOnly).toBe(false);
+  });
+
+  test("5.14 の2の3：拒否：URL のコードの形が違えば、コード欄を埋めない", async () => {
     installFakeWebAuthn();
     renderApp({ me: null, hash: "#/pair?code=K7P-2QX" });
     expect(((await screen.findByLabelText("ペアリングのコード")) as HTMLInputElement).value).toBe(
-      "K7P-2QX",
+      "",
     );
+  });
+
+  test("5.14 の2の4：確認コードの画面は、ランチャーの窓（はい）でも確かめられると言う", async () => {
+    installFakeWebAuthn();
+    renderApp({
+      me: null,
+      hash: "#/pair?code=ABCDE-FGHJK",
+      routes: {
+        "POST /pairing/options": ok(OPTIONS),
+        "POST /pairing/register": ok({ confirm_code: "482913" }),
+      },
+    });
+    await screen.findByRole("heading", { level: 1, name: "この端末を登録する" });
+    fireEvent.change(screen.getByLabelText(/この端末の名前/), { target: { value: "自宅のPC" } });
+    fireEvent.click(screen.getByRole("button", { name: "パスキーを作って登録する" }));
+    await screen.findByRole("region", { name: "確認コード" });
+    expect(screen.getByText(/に出ている数字と同じか確かめて/).textContent).toContain("はい");
   });
 
   test("コードが違う・失効した：制御サーバーの日本語のメッセージ", async () => {

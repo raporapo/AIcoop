@@ -25,6 +25,32 @@ Windows では、WSL2 の中で動かします（設計書 4.3。Windows 11 の 
 1. 管理者のターミナルで `wsl --install` を実行し、再起動して、Ubuntu のユーザー名とパスワードを決める
 2. Ubuntu の中で、上の apt のパッケージと Node.js 24・pnpm 11 を入れ、`sudo usermod -aG kvm $USER` のあと、Windows 側で `wsl --shutdown` して開き直す
 3. リポジトリは Ubuntu の中（`~/AIcoop` など）に clone する。`/mnt/c/...`（Windows の C ドライブ）は読み書きが遅い。設定の置き場所（`AICOOP_HOME`）も `/mnt/c` に置かない（既定では `chmod 600` が効かず、`secrets.json` の確かめ（E-008）で止まる）
+4. （ランチャーを使うなら）`aicoop` コマンドを Ubuntu の `/usr/local/bin` に置き、Windows 側で `scripts/windows/install.ps1` を実行する（下の「Windows のランチャー」）
+
+#### Windows のランチャー（スタートメニューの「AIcoop」）
+
+ターミナルを開かずに、スタートメニューの「AIcoop」から承認アプリを開けます（設計書 5.14 の1）。ランチャーは WSL の中で `aicoop open --launcher` を窓なしで動かし、承認アプリを既定のブラウザで開きます。はじめて開いたときは、設定の雛形（会社の名前は「わたしの会社」。あとで変えられます）を作り、制御サーバーを起動して、この PC のブラウザを承認アプリの端末として登録します。ブラウザでパスキーを作ると6桁の確認コードが出るので、メッセージボックスの数字と同じなら「はい」を押します。
+
+まず、Ubuntu の中で `aicoop` を PATH に置きます。ランチャーと自動起動は `wsl -e` で動かすので `~/.bashrc`・`~/.profile` を読みません。`alias` や `~/.local/bin` ではなく、`/usr/local/bin` に置き、node も絶対パスで書きます。
+
+```sh
+# Ubuntu の中で（リポジトリが ~/AIcoop にあるとき）
+printf '#!/bin/sh\nexec %s %s/AIcoop/packages/cli/bin/aicoop.ts "$@"\n' "$(command -v node)" "$HOME" | sudo tee /usr/local/bin/aicoop >/dev/null
+sudo chmod 755 /usr/local/bin/aicoop
+pnpm --filter @aicoop/approver build   # 承認アプリを作る（初めてのときと、更新したとき）
+```
+
+次に、Windows の PowerShell（管理者でなくてよい）で、リポジトリの `scripts/windows/install.ps1` を実行します。
+
+```powershell
+# Ubuntu の中のリポジトリを、Windows から指す（\\wsl.localhost\<ディストリ>\home\<ユーザー>\AIcoop）
+powershell -ExecutionPolicy Bypass -File \\wsl.localhost\Ubuntu\home\<ユーザー>\AIcoop\scripts\windows\install.ps1
+# 既定のディストリ・既定のユーザーでないときは -Distro Ubuntu -User <ユーザー> を足す
+```
+
+- 入れるもの：ランチャー（`%LOCALAPPDATA%\AIcoop\aicoop-launcher.ps1`）、スタートメニューの「AIcoop」、ログオン時の自動起動のタスク「AIcoop 自動起動」（あれば置き換えます）。
+- 自動起動は、WSL の中で `aicoop start --autostart` を動かします。設定（`~/.aicoop/aicoop.yaml`）がなければ何もせず、動いていれば何もせず、そうでなければ起動して `~/.aicoop/logs/autostart.log` に書きます。
+- WSL の中に `aicoop` がなければ、入れ方を出して止まります。何度実行しても同じ状態になります。消すときは `scripts/windows/uninstall.ps1`（WSL の中の `~/.aicoop` は消しません）。
 
 ```sh
 git clone https://github.com/raporapo/AIcoop.git && cd AIcoop
@@ -67,6 +93,7 @@ aicoop pair --local                    # この PC のブラウザを端末と�
 # ブラウザに出た6桁の数字が、ターミナルの数字と同じか確かめて、ターミナルで y を押す
 ```
 
+- `aicoop open` なら、ここまでを1つで行います（設定がなければ雛形を作り、制御サーバーを起動し、端末がなければコードを入れた URL をブラウザで開いて登録から始め、あれば承認アプリを開きます。ブラウザは macOS は `open`、Linux は `xdg-open`、WSL は `wslview` があれば開き、なければ URL を出します）。
 - そのあとは `http://localhost:7070/app/` を開き、パスキーでログインします。`127.0.0.1` ではパスキーを使えないので、`localhost` で開いてください。
 - 画面：承認待ち（期限の近いものから）・承認待ちの詳細（要約・部長のコメント・元のリクエスト全体）・稼働状況（手動のタスクもここから）・利用枠・記録（監査ログ）・端末。
 - 送信系の承認は、元のリクエスト全体を開いて確かめるまで「承認する」を押せません（10.2「要約だけを見て承認しない」）。
@@ -103,6 +130,7 @@ aicoop/
 │   └── relay/            中継（Cloudflare Worker。P3）
 ├── services/          ✅ 組み込みのサービス定義（github・gmail・web）
 ├── templates/         ✅ aicoop init で配る雛形
+├── scripts/windows/   ✅ Windows のランチャー・自動起動を入れる PowerShell（install.ps1・uninstall.ps1）
 └── docs/              ✅ 設計書・開発の進め方（設計書にない決定の一覧も）
 ```
 

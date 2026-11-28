@@ -28,11 +28,18 @@ export class FakeInput implements InputStream {
   private listeners: { data: (chunk: Buffer) => void; end: () => void }[] = [];
   private pending: (Buffer | "end")[] = [];
 
-  constructor(options: { readonly tty?: boolean; readonly data?: string | Buffer } = {}) {
+  /** `open` なら、端末でないパイプでも終わらせずに開いたままにする（ランチャーの標準入力） */
+  constructor(
+    options: {
+      readonly tty?: boolean;
+      readonly data?: string | Buffer;
+      readonly open?: boolean;
+    } = {},
+  ) {
     this.isTTY = options.tty === true;
     if (options.data !== undefined) {
       this.pending.push(Buffer.from(options.data), "end");
-    } else if (!this.isTTY) {
+    } else if (!this.isTTY && options.open !== true) {
       this.pending.push("end");
     }
   }
@@ -155,6 +162,8 @@ export function createTestCli(options: TestCliOptions = {}): TestCli {
     isProcessAlive: () => false,
     which: () => null,
     canAccess: () => false,
+    launchDetached: async () => false,
+    isWsl: () => false,
     runInTerminal: async () => {
       throw new Error("テストでは runInTerminal を差し込んでください");
     },
