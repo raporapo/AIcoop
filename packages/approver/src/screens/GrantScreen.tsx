@@ -4,12 +4,14 @@
  */
 import { useState } from "react";
 import { ApprovalPanel, type Decidable } from "../components/ApprovalPanel.tsx";
-import { SafeText, Untrusted } from "../components/text.tsx";
+import { SummarySection } from "../components/Summary.tsx";
+import { SafeText } from "../components/text.tsx";
 import { Badge, LoadFailed, Loading, StaleNote, TimeText } from "../components/ui.tsx";
 import { useApp } from "../lib/context.tsx";
 import { GRANT_MODE_TEXT, grantParamsText } from "../lib/grant.ts";
 import { deciderLabel, GRANT_STATUS_LABELS, statusLabel } from "../lib/labels.ts";
 import { useResource } from "../lib/resource.ts";
+import { describeSummary } from "../lib/summary.ts";
 
 export function GrantScreen({ id }: { readonly id: string }) {
   const app = useApp();
@@ -47,12 +49,19 @@ export function GrantScreen({ id }: { readonly id: string }) {
 
   const status = statusLabel(GRANT_STATUS_LABELS, grant.status);
   const params = grantParamsText(grant.params);
+  const summary = describeSummary(grant.summary);
+  const hasSummary = typeof grant.summary === "object" && grant.summary !== null;
   const decidable: Decidable =
     grant.status !== "pending_owner"
       ? { ok: false, reason: "この申請は、もうあなたの承認を待っていません" }
-      : res.staleSince !== null
-        ? { ok: false, reason: "最新の状態を確かめられていないので、承認・却下はできません" }
-        : { ok: true };
+      : !hasSummary
+        ? {
+            ok: false,
+            reason: "要約がないので、承認・却下はできません（署名の対象を見せられません）",
+          }
+        : res.staleSince !== null
+          ? { ok: false, reason: "最新の状態を確かめられていないので、承認・却下はできません" }
+          : { ok: true };
 
   return (
     <>
@@ -66,48 +75,25 @@ export function GrantScreen({ id }: { readonly id: string }) {
       </p>
       <StaleNote since={res.staleSince} />
 
+      {params === null && (
+        <p className="notice notice-warn">
+          <span aria-hidden="true">⚠ </span>
+          パラメーターの制限がありません。この操作のすべてに効きます（部署の上限の範囲で）。
+        </p>
+      )}
+
+      {hasSummary ? (
+        <SummarySection summary={summary} />
+      ) : (
+        <p className="notice notice-error">
+          <span aria-hidden="true">✕ </span>
+          この申請には、承認アプリに見せる要約がありません。制御サーバー（aicoop）を新しくしてください。
+        </p>
+      )}
+
       <section aria-labelledby="grant-heading" className="section">
-        <h2 id="grant-heading">申請の中身</h2>
+        <h2 id="grant-heading">申請の記録</h2>
         <dl className="meta">
-          <dt>誰が</dt>
-          <dd>
-            社員 <strong>{grant.member_id}</strong>
-          </dd>
-          <dt>何の操作を</dt>
-          <dd className="mono">
-            <SafeText text={grant.operation} />
-          </dd>
-          <dt>どのパラメーターで</dt>
-          <dd>
-            {params === null ? (
-              <span className="notice notice-warn">
-                <span aria-hidden="true">⚠ </span>
-                パラメーターの制限がありません。この操作のすべてに効きます（部署の上限の範囲で）。
-              </span>
-            ) : (
-              <ul className="plain-list">
-                {Object.entries(grant.params).map(([k, values]) => (
-                  <li key={k}>
-                    <span className="mono">
-                      <SafeText text={k} />
-                    </span>
-                    ：
-                    {values.map((v, i) => (
-                      // biome-ignore lint/suspicious/noArrayIndexKey: 並びは変わらない
-                      <span key={i} className="mono">
-                        {i > 0 && "、"}
-                        <SafeText text={v} />
-                      </span>
-                    ))}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </dd>
-          <dt>何時間</dt>
-          <dd>{grant.duration_hours}時間</dd>
-          <dt>効き方</dt>
-          <dd>{GRANT_MODE_TEXT[grant.mode] ?? grant.mode}</dd>
           <dt>申請の時刻</dt>
           <dd>
             <TimeText iso={grant.created_at} />
@@ -131,7 +117,6 @@ export function GrantScreen({ id }: { readonly id: string }) {
             </>
           )}
         </dl>
-        <Untrusted label="申請の理由" text={grant.reason} source="AI 社員" />
       </section>
 
       {grant.status === "pending_manager" && (
@@ -146,6 +131,7 @@ export function GrantScreen({ id }: { readonly id: string }) {
           type="grant"
           id={grant.id}
           decidable={decidable}
+          displayedSummary={{ value: grant.summary }}
           approveTitle="この一時権限を承認しますか？"
           approveLabel="パスキーで署名して承認する"
           approveBody={

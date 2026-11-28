@@ -19,6 +19,7 @@ import type {
   GetHoldResponse,
   GetTaskResponse,
   GrantStatusView,
+  HoldStatus,
   ListAuditResponse,
   ListDevicesResponse,
   ListGrantsResponse,
@@ -172,7 +173,8 @@ export function createApiClient(options: ApiClientOptions = {}) {
     cancelTask: (id: string) => post<CancelTaskResponse>(`/tasks/${seg(id)}/cancel`),
 
     // ---- 保留・一時権限・承認（5.7、5.8 の3） ----
-    listHolds: () => get<ListHoldsResponse>("/holds"),
+    listHolds: (statuses?: readonly HoldStatus[]) =>
+      get<ListHoldsResponse>(`/holds${query({ status: statuses })}`),
     getHold: (id: string) => get<GetHoldResponse>(`/holds/${seg(id)}`),
     listGrants: (statuses?: readonly GrantStatusView[]) =>
       get<ListGrantsResponse>(`/grants${query({ status: statuses })}`),

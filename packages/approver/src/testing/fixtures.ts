@@ -60,13 +60,24 @@ export const MAIL_RFC822 = [
   "いつもお世話になっております。お見積りをお送りします。",
 ].join("\r\n");
 
+/** daemon（holds/prepare.ts・views.ts）が作る形：要約に部長のコメントを添えたもの */
 export const GMAIL_SUMMARY = {
   kind: "gmail_message",
+  operation: "gmail.message.send",
+  member_id: "sales-writer",
+  warnings: [],
+  source: "message",
+  draft_id: null,
+  from: [],
   to: ["client@example.com"],
   cc: [],
   bcc: ["boss@example.org"],
-  subject: "お見積りの件",
+  subject: ["お見積りの件"],
+  body_kind: "text",
   body_text: "いつもお世話になっております。お見積りをお送りします。",
+  body_truncated: false,
+  attachments: [],
+  manager_comment: "宛先と金額を確かめました。問題ありません。",
 };
 
 export const MAIL_HOLD: HoldDetailView = {
@@ -74,7 +85,7 @@ export const MAIL_HOLD: HoldDetailView = {
   task_id: id("t", 1),
   member_id: "sales-writer",
   group_id: "sales",
-  operation: "message.send",
+  operation: "gmail.message.send",
   status: "pending_owner",
   summary: GMAIL_SUMMARY,
   created_at: iso(NOW - 2 * HOUR),
@@ -104,15 +115,23 @@ export const MERGE_HOLD: HoldDetailView = {
   task_id: id("t", 2),
   member_id: "dev-implementer",
   group_id: "dev",
-  operation: "pr.merge",
+  operation: "github.pr.merge",
   service: "github",
   params: { repo: "myorg/app" },
   summary: {
     kind: "github_pr_merge",
+    operation: "github.pr.merge",
+    member_id: "dev-implementer",
+    warnings: [],
     repo: "myorg/app",
-    pr_number: 12,
+    number: 12,
     title: "README の誤字を直す",
     changed_files: 1,
+    head_sha: "0123456789abcdef0123456789abcdef01234567",
+    head_ref: "fix-readme",
+    base_ref: "main",
+    merge_method: "squash",
+    manager_comment: null,
   },
   created_at: iso(NOW - 30 * MIN),
   expires_at: iso(NOW + 30 * MIN),
@@ -133,9 +152,9 @@ export const MANAGER_HOLD: HoldView = {
   task_id: id("t", 3),
   member_id: "sales-writer",
   group_id: "sales",
-  operation: "message.send",
+  operation: "gmail.message.send",
   status: "pending_manager",
-  summary: { ...GMAIL_SUMMARY, subject: "ご挨拶" },
+  summary: { ...GMAIL_SUMMARY, subject: ["ご挨拶"], manager_comment: null },
   created_at: iso(NOW - 5 * MIN),
   expires_at: iso(NOW + 71 * HOUR),
 };
@@ -154,7 +173,21 @@ export function holdView(h: HoldDetailView): HoldView {
   };
 }
 
-export const PUSH_GRANT: GrantView = {
+/** 一時権限の要約（daemon の grantSummaryOf と同じ形）を GrantView から作る */
+export function grantSummary(g: Omit<GrantView, "summary">): unknown {
+  return {
+    kind: "grant",
+    member_id: g.member_id,
+    operation: g.operation,
+    params: g.params,
+    mode: g.mode,
+    duration_hours: g.duration_hours,
+    reason: g.reason,
+    manager_comment: g.manager_comment,
+  };
+}
+
+const PUSH_GRANT_BASE: Omit<GrantView, "summary"> = {
   id: id("g", 1),
   member_id: "dev-implementer",
   operation: "github.git.push",
@@ -167,14 +200,23 @@ export const PUSH_GRANT: GrantView = {
   starts_at: null,
   expires_at: null,
   decided_by: "manager:dev-manager",
+  manager_comment: "必要な権限です。",
 };
 
-export const MANAGER_GRANT: GrantView = {
-  ...PUSH_GRANT,
+/** GrantView（要約は中身に合わせて作り直す） */
+export function grantView(overrides: Partial<Omit<GrantView, "summary">> = {}): GrantView {
+  const base = { ...PUSH_GRANT_BASE, ...overrides };
+  return { ...base, summary: grantSummary(base) };
+}
+
+export const PUSH_GRANT: GrantView = grantView();
+
+export const MANAGER_GRANT: GrantView = grantView({
   id: id("g", 2),
   status: "pending_manager",
   decided_by: null,
-};
+  manager_comment: null,
+});
 
 export function task(overrides: Partial<TaskView> = {}): TaskView {
   return {

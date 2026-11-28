@@ -30,7 +30,7 @@ const PendingContext = createContext<PendingValue | null>(null);
 
 export function PendingProvider({ children }: { readonly children: ReactNode }) {
   const app = useApp();
-  const holds = useResource(() => app.api.listHolds(), {
+  const holds = useResource(() => app.api.listHolds(["pending_manager", "pending_owner"]), {
     key: "holds",
     cache: { name: "holds", sanitize: holdsForCache },
   });

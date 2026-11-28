@@ -5,6 +5,7 @@
 import type { HoldDetailView } from "@aicoop/shared/api";
 import { useState } from "react";
 import { ApprovalPanel, type Decidable } from "../components/ApprovalPanel.tsx";
+import { SummarySection } from "../components/Summary.tsx";
 import { SafeText, Untrusted } from "../components/text.tsx";
 import {
   Badge,
@@ -26,36 +27,8 @@ import {
 import { useNow } from "../lib/polling.ts";
 import { useResource } from "../lib/resource.ts";
 import { hrefOf } from "../lib/router.ts";
-import { describeSummary, formatBytes, type SummaryField, shortSummary } from "../lib/summary.ts";
+import { describeSummary, formatBytes, shortSummary } from "../lib/summary.ts";
 import { deadline } from "../lib/time.ts";
-
-function FieldValue({ field }: { readonly field: SummaryField }) {
-  const { value } = field;
-  if (field.prose && value.type === "text") {
-    return <Untrusted label={field.label} text={value.text} source="AI 社員・外の人" />;
-  }
-  switch (value.type) {
-    case "empty":
-      return <span className="muted">（なし）</span>;
-    case "text":
-      return <SafeText text={value.text} />;
-    case "list":
-      return value.items.length === 0 ? (
-        <span className="muted">（なし）</span>
-      ) : (
-        <ul className="plain-list">
-          {value.items.map((item, i) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: 並びは変わらない
-            <li key={i}>
-              <SafeText text={item} />
-            </li>
-          ))}
-        </ul>
-      );
-    case "json":
-      return <Untrusted label={field.label} text={value.text} mono />;
-  }
-}
 
 function responseText(status: number): string {
   return status >= 200 && status < 300 ? `HTTP ${status}（成功）` : `HTTP ${status}（失敗）`;
@@ -242,30 +215,16 @@ export function HoldScreen({ id }: { readonly id: string }) {
         <dd>{deciderLabel(hold.decided_by)}</dd>
       </dl>
 
-      <section aria-labelledby="summary-heading" className="section">
-        <h2 id="summary-heading">要約：{summary.kindLabel}</h2>
-        <p className="muted small">
-          制御サーバーが元のリクエストから作った要約です。承認の署名には、この要約の SHA-256
-          が入ります。
-        </p>
-        <dl className="summary">
-          {summary.fields.map((f) => (
-            <div key={f.key} className="summary-row">
-              <dt>{f.label}</dt>
-              <dd>
-                <FieldValue field={f} />
-              </dd>
-            </div>
-          ))}
-        </dl>
-      </section>
+      <SummarySection summary={summary} />
 
-      {hold.manager_comment !== null && (
-        <section aria-labelledby="comment-heading" className="section">
-          <h2 id="comment-heading">部長のコメント</h2>
-          <Untrusted label="部長のコメント" text={hold.manager_comment} source="部長（AI）" />
-        </section>
-      )}
+      {/* 部長のコメントは要約に入っている（daemon の holdApprovalSummary）。入っていない版のときだけ別に出す */}
+      {hold.manager_comment !== null &&
+        !summary.fields.some((f) => f.key === "manager_comment") && (
+          <section aria-labelledby="comment-heading" className="section">
+            <h2 id="comment-heading">部長のコメント</h2>
+            <Untrusted label="部長のコメント" text={hold.manager_comment} source="部長（AI）" />
+          </section>
+        )}
 
       <RequestSection
         hold={hold}

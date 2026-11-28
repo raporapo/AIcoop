@@ -96,7 +96,7 @@ describe("5.8 の4 (2) 承認待ちの詳細：要約・部長のコメント・
     expect(
       screen.getByRole("region", { name: "外から来た文章：部長のコメント" }).textContent,
     ).toContain("問題ありません");
-    expect(screen.getByText("sales-writer")).toBeTruthy();
+    expect(screen.getAllByText("sales-writer").length).toBeGreaterThan(0);
     expect(screen.getByRole("link", { name: MAIL_HOLD.task_id }).getAttribute("href")).toBe(
       `#/tasks/${MAIL_HOLD.task_id}`,
     );
@@ -114,6 +114,21 @@ describe("5.8 の4 (2) 承認待ちの詳細：要約・部長のコメント・
     expect(subject.textContent).not.toContain("\u{202E}");
     expect(subject.textContent).toContain("見えない文字・向きを変える文字が 2 個入っています");
     expect(subject.textContent).toContain("向きを変える文字は、表示の順番を入れ替えて");
+  });
+
+  test("要約の warnings（制御サーバーからの注意）は、要約の先頭で目立たせる", async () => {
+    setup({
+      ...MAIL_HOLD,
+      summary: {
+        ...(MAIL_HOLD.summary as object),
+        warnings: ["本文は HTML です。表示と送る中身が違うことがあります"],
+      },
+    });
+    const heading = await screen.findByRole("heading", { level: 2, name: "要約：メール" });
+    const first = heading.closest("section")?.querySelector(".summary-row");
+    expect(first?.textContent).toContain("制御サーバーからの注意");
+    expect(first?.textContent).toContain("⚠ 本文は HTML です");
+    expect(first?.querySelector("[role='note']")).not.toBeNull();
   });
 
   test("10.2：送信系は、元のリクエスト全体を開くまで「承認する」を押せない。開くとヘッダー・本文・メールの中身が見える", async () => {

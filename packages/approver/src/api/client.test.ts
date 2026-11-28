@@ -57,11 +57,13 @@ describe("API の呼び出し（9.2。承認アプリでの呼び出しはここ
     await api.getHold("h_../../x");
     await api.audit({ after: 120, limit: 200 });
     await api.listGrants(["pending_manager", "pending_owner"]);
+    await api.listHolds(["pending_owner"]);
     expect(f.calls.map((c) => c.url)).toEqual([
       "/api/v1/tasks?status=running,queued&limit=50",
       "/api/v1/holds/h_..%2F..%2Fx",
       "/api/v1/audit?after=120&limit=200",
       "/api/v1/grants?status=pending_manager,pending_owner",
+      "/api/v1/holds?status=pending_owner",
     ]);
     expect(f.calls[0]?.init.method).toBe("GET");
     expect(f.calls[0]?.init.body).toBeUndefined();
