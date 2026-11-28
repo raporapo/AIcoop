@@ -17,7 +17,7 @@ import { CliError, UsageError } from "../errors.ts";
 import { EXIT } from "../exit-codes.ts";
 import { shortPath } from "../home.ts";
 
-const DEFAULT_COMPANY_NAME = "わたしの会社";
+export const DEFAULT_COMPANY_NAME = "わたしの会社";
 const MAX_NAME_LENGTH = 100;
 
 function companyName(value: string | boolean | undefined): string {
@@ -58,6 +58,36 @@ function existingCompany(path: string): { id: string; name: string } | undefined
     // 読めなければ使わない
   }
   return undefined;
+}
+
+/**
+ * 雛形のファイルと置き場所のフォルダを作る（すでにあるファイルは上書きしない）。作ったファイルを返す。
+ * `aicoop open` も、設定がないときにこれで作る（5.14 の2の1）
+ */
+export function writeScaffold(
+  home: string,
+  company: { readonly companyId: string; readonly companyName: string },
+): string[] {
+  const paths = aicoopPaths(home);
+  mkdirSync(home, { recursive: true, mode: 0o700 });
+  const created: string[] = [];
+  for (const file of initTemplateFiles()) {
+    const target = join(home, file.target);
+    if (existsSync(target)) continue;
+    const text = renderInitTemplate(file.target, readFileSync(file.source, "utf8"), company);
+    mkdirSync(join(target, ".."), { recursive: true });
+    try {
+      writeFileSync(target, text, { flag: "wx" });
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "EEXIST") continue;
+      throw e;
+    }
+    created.push(file.target);
+  }
+  for (const dir of [paths.dataDir, paths.logsDir, paths.runtimeDir, paths.holdsDir]) {
+    mkdirSync(dir, { recursive: true });
+  }
+  return created;
 }
 
 export async function run(input: CommandInput): Promise<number> {
@@ -107,27 +137,7 @@ export async function run(input: CommandInput): Promise<number> {
   const companyId = kept?.id ?? newId("company");
 
   const homeExisted = existsSync(home);
-  mkdirSync(home, { recursive: true, mode: 0o700 });
-
-  const created: string[] = [];
-  for (const file of files) {
-    const target = join(home, file.target);
-    if (existsSync(target)) continue;
-    const text = renderInitTemplate(file.target, readFileSync(file.source, "utf8"), {
-      companyId,
-      companyName: name,
-    });
-    mkdirSync(join(target, ".."), { recursive: true });
-    try {
-      writeFileSync(target, text, { flag: "wx" });
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code === "EEXIST") continue;
-      throw e;
-    }
-    created.push(file.target);
-  }
-  const dirs = [paths.dataDir, paths.logsDir, paths.runtimeDir, paths.holdsDir];
-  for (const dir of dirs) mkdirSync(dir, { recursive: true });
+  const created = writeScaffold(home, { companyId, companyName: name });
 
   if (homeExisted && process.platform !== "win32") {
     const mode = statSync(home).mode & 0o777;

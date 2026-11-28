@@ -10,77 +10,23 @@
  *
  * 確認コードを見比べるのはオーナー本人なので、端末（TTY）から実行したときだけ動く（`--yes` はない）。
  */
-import type {
-  ActivatePairingResponse,
-  LocalPairingStatusResponse,
-  StartLocalPairingResponse,
-} from "@aicoop/daemon";
-import { ApiRequestError, apiFailure, DaemonClient } from "../api/client.ts";
+import { DaemonClient } from "../api/client.ts";
 import type { CommandInput } from "../command.ts";
-import type { CliContext } from "../context.ts";
-import { CliError, UsageError } from "../errors.ts";
+import { UsageError } from "../errors.ts";
 import { EXIT } from "../exit-codes.ts";
 import { readTimezone, requireInitialized } from "../home.ts";
+import {
+  activateLocalPairing,
+  cancelLocalPairing,
+  isYes,
+  readAnswer,
+  startLocalPairing,
+  waitForRegistration,
+} from "../pairing.ts";
 import { cleanLine } from "../ui/text.ts";
 import { formatTime } from "../ui/time.ts";
-import { interruption } from "./common.ts";
 
-const POLL_MS = 1000;
-const YES = ["y", "yes", "はい"];
-
-/** 端末から1行読む。Ctrl+C なら null */
-function readAnswer(ctx: CliContext): Promise<string | null> {
-  return new Promise((resolve) => {
-    let text = "";
-    let done = false;
-    const finish = (value: string | null) => {
-      if (done) return;
-      done = true;
-      unsubscribe();
-      offInterrupt();
-      resolve(value);
-    };
-    const unsubscribe = ctx.stdin.subscribe(
-      (chunk) => {
-        text += chunk.toString("utf8");
-        if (text.includes("\u0003")) return finish(null);
-        const nl = text.search(/\r?\n|\r/);
-        if (nl >= 0) finish(text.slice(0, nl));
-      },
-      () => finish(text),
-    );
-    const offInterrupt = ctx.deps.onInterrupt(() => finish(null));
-  });
-}
-
-function endedMessage(status: LocalPairingStatusResponse): CliError {
-  if (status.status === "expired") {
-    return new CliError(EXIT.failure, "コードの期限（10分）が切れました。端末は登録していません", [
-      "もう一度 aicoop pair --local を実行してください",
-    ]);
-  }
-  switch (status.cancel_reason) {
-    case "superseded":
-      return new CliError(
-        EXIT.failure,
-        "ほかの aicoop pair --local が始まったので、このコードは使えなくなりました",
-        ["登録は、新しく出したコードで続けてください"],
-      );
-    case "too_many_attempts":
-      return new CliError(
-        EXIT.failure,
-        "違うコードが何度も送られたので、このコードを無効にしました。端末は登録していません",
-        [
-          "ほかのだれかがコードを当てようとしたのかもしれません",
-          "もう一度 aicoop pair --local を実行してください",
-        ],
-      );
-    default:
-      return new CliError(EXIT.failure, "この登録は取り消されました。端末は登録していません", [
-        "もう一度 aicoop pair --local を実行してください",
-      ]);
-  }
-}
+const RETRY = { retry: "aicoop pair --local" };
 
 export async function run(input: CommandInput): Promise<number> {
   const { home, values, out, err, ctx } = input;
@@ -99,12 +45,7 @@ export async function run(input: CommandInput): Promise<number> {
   const client = DaemonClient.connect(ctx, home);
   const tz = await readTimezone(home);
 
-  let started: StartLocalPairingResponse;
-  try {
-    started = await client.post<StartLocalPairingResponse>("/pairing/local", {});
-  } catch (e) {
-    throw apiFailure(e, home);
-  }
+  const started = await startLocalPairing(client, home);
   const code = cleanLine(started.code);
   const style = out.style;
   out.lines([
@@ -116,37 +57,13 @@ export async function run(input: CommandInput): Promise<number> {
     "",
   ]);
 
-  const cancel = async () => {
-    try {
-      await client.post(`/pairing/local/${encodeURIComponent(started.code)}/cancel`, {});
-    } catch {
-      // 取り消せなくても、10分で失効する
-    }
-  };
+  const cancel = () => cancelLocalPairing(client, started.code);
 
-  const stop = interruption(ctx);
-  let status: LocalPairingStatusResponse;
-  try {
-    err.line(err.style.dim("ブラウザでの登録を待っています…（Ctrl+C で取りやめます）"));
-    for (;;) {
-      try {
-        status = await client.get<LocalPairingStatusResponse>(
-          `/pairing/local/${encodeURIComponent(started.code)}`,
-        );
-      } catch (e) {
-        throw apiFailure(e, home);
-      }
-      if (status.status === "registered") break;
-      if (status.status !== "waiting") throw endedMessage(status);
-      await stop.sleep(POLL_MS);
-      if (stop.interrupted) {
-        await cancel();
-        err.line("取りやめました（端末は登録していません）");
-        return EXIT.interrupted;
-      }
-    }
-  } finally {
-    stop.dispose();
+  err.line(err.style.dim("ブラウザでの登録を待っています…（Ctrl+C で取りやめます）"));
+  const status = await waitForRegistration(ctx, client, home, started.code, RETRY);
+  if (status === null) {
+    err.line("取りやめました（端末は登録していません）");
+    return EXIT.interrupted;
   }
 
   out.lines([
@@ -165,32 +82,13 @@ export async function run(input: CommandInput): Promise<number> {
     err.line("取りやめました（端末は登録していません）");
     return EXIT.interrupted;
   }
-  if (!YES.includes(answer.trim().toLowerCase())) {
+  if (!isYes(answer)) {
     await cancel();
     err.line("取りやめました（端末は登録していません）");
     return EXIT.failure;
   }
 
-  let activated: ActivatePairingResponse;
-  try {
-    activated = await client.post<ActivatePairingResponse>(
-      `/pairing/local/${encodeURIComponent(started.code)}/activate`,
-      {},
-    );
-  } catch (e) {
-    if (
-      e instanceof ApiRequestError &&
-      (e.body?.error === "pairing_invalid" || e.body?.error === "invalid_state")
-    ) {
-      throw new CliError(
-        EXIT.failure,
-        `端末を有効にできませんでした（登録していません）：${e.body.message}`,
-        ["もう一度 aicoop pair --local を実行してください"],
-      );
-    }
-    throw apiFailure(e, home);
-  }
-  const device = activated.device;
+  const device = await activateLocalPairing(client, home, started.code, RETRY);
   const appUrl = cleanLine(started.url).replace(/#.*$/, "");
   out.lines([
     "",
