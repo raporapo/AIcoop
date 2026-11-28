@@ -87,7 +87,8 @@ try {
     exit 1
   }
 
-  $wslArgs = @()
+  # 作業フォルダは WSL の中のホーム（Windows のフォルダに移ろうとして警告が出ないように）
+  $wslArgs = @("--cd", "~")
   if ($Distro -ne "") { $wslArgs += @("-d", $Distro) }
   if ($User -ne "") { $wslArgs += @("-u", $User) }
   $wslArgs += @("-e", $Command, "open", "--launcher")

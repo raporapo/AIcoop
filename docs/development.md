@@ -394,7 +394,7 @@ P1 の完了条件は設計書の第14章にある。OSに依存しない部品�
 | # | 内容 | いまの実装 | 理由 |
 |---|---|---|---|
 | OP-1 | `aicoop open --launcher` の形 | 標準出力に1行1つの JSON（UTF-8、`\n`）。どの行にも `v: 1` と `event`。`progress {message}`・`open {url}`・`confirm {code, device_name}`・`done {url, device: {id, name} \| null}`・`cancelled {message}`・`error {message, hints}`。confirm のあとは標準入力から1行。前後の空白を除いて `yes` の行だけが「はい」で、ほかの行・改行のない終わり・入力の終わり・中断はすべて取り消す。人向けの進み具合は標準エラー（色なし）。終了コードは CL-1 と同じ（いいえは 1、中断は 130） | 5.14 の2の4・D-29。ランチャーに TTY がない。拒否側 |
-| OP-2 | 自動起動を WSL の中で動かす仕組み | `aicoop start --autostart` を足した（リポジトリの sh は置かない）。タスクは `conhost.exe --headless wsl.exe [-d <distro>] [-u <user>] -e aicoop start --autostart`。設定がなければ何もせず（フォルダも作らない）、動いていれば何もせず（ログも書かない）、そうでなければ起動して `logs/autostart.log` に時刻と結果を足す | リポジトリの置き場所に依らず、`aicoop` が PATH にあれば動く。conhost の `--headless` で窓を出さない（いまのタスクと同じ） |
+| OP-2 | 自動起動を WSL の中で動かす仕組み | `aicoop start --autostart` を足した（リポジトリの sh は置かない）。タスクは `conhost.exe --headless wsl.exe --cd ~ [-d <distro>] [-u <user>] -e aicoop start --autostart`（ランチャーも `--cd ~`。Windows のフォルダへ移ろうとして出る警告を避ける）。設定がなければ何もせず（フォルダも作らない）、動いていれば何もせず（ログも書かない）、そうでなければ起動して `logs/autostart.log` に時刻と結果を足す | リポジトリの置き場所に依らず、`aicoop` が PATH にあれば動く。conhost の `--headless` で窓を出さない（いまのタスクと同じ） |
 | OP-3 | WSL の中の `aicoop` の置き場所 | `wsl -e` は `.profile` を読まないので、`/usr/local/bin/aicoop`（node を絶対パスで呼ぶ sh）に置く。install.ps1 は `wsl -e sh -c "command -v aicoop"` で確かめ、なければ入れ方を出して止める | ランチャー・自動起動と同じ PATH で確かめる |
 | OP-4 | 「有効な端末」 | `GET /devices` の `revoked_at` が null のもの。取り消した端末しかなければ登録から | 5.14 の2の3 |
 | OP-5 | 設定が途中まであるとき | aicoop.yaml がないのに、ほかの雛形・state.db・secrets.json があれば、雛形を作らずに止める（エラー） | `aicoop init` と同じ考え（会社の ID が変わる・上書きしない） |

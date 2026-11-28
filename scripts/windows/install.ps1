@@ -94,7 +94,7 @@ $lnk.Save()
 Write-Step "スタートメニューに「AIcoop」を作りました：$ShortcutPath"
 
 # 4. ログオン時の自動起動（置き換える）
-$taskArgs = @("--headless", $Wsl) + $target + @("-e", "aicoop", "start", "--autostart")
+$taskArgs = @("--headless", $Wsl, "--cd", "~") + $target + @("-e", "aicoop", "start", "--autostart")
 $action = New-ScheduledTaskAction -Execute $Conhost -Argument (($taskArgs | ForEach-Object { ConvertTo-Argument $_ }) -join " ")
 $me = "$env:USERDOMAIN\$env:USERNAME"
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $me
