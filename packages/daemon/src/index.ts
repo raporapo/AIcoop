@@ -11,6 +11,7 @@ export {
   type DaemonHandle,
   DaemonStartError,
   type DaemonStartErrorCode,
+  type SetupOptions,
   type StartDaemonOptions,
   startDaemon,
 } from "./daemon/start.ts";
@@ -134,3 +135,12 @@ export {
   setSecret,
   validateSecretValue,
 } from "./secrets/store.ts";
+// 準備の画面の箱のイメージ（5.14 の3の4。CLI が差し込む）
+export type { ImageBuildRunner } from "./setup/image-build.ts";
+// 準備の確認（aicoop check の後半と、準備の画面の GET /setup。5.14 の3）
+export {
+  checkHostReadiness,
+  type ReadinessHost,
+  type ReadinessItem,
+  type ReadinessOptions,
+} from "./setup/readiness.ts";

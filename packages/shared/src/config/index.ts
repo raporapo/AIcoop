@@ -16,6 +16,7 @@ export {
 } from "./company.ts";
 export { checkCronSchedule, nextCronRun } from "./cron.ts";
 export {
+  DEFAULT_COMPANY_NAME,
   type InitTemplateFile,
   type InitValues,
   initTemplateFiles,

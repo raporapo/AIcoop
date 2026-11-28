@@ -1,5 +1,6 @@
 /**
- * `aicoop login`：`claude setup-token` の画面の記録から、作られたトークンを取り出す。
+ * `claude setup-token` の画面の記録から、作られたトークンとログイン用の URL を取り出す。
+ * `aicoop login`（CL-24）と、準備の画面の Claude へのログイン（5.14 の3の2）で使う。
  *
  * `claude setup-token` は端末でだけ動く画面（TUI）で、トークンを画面に出すだけで、どこにも保存しない。
  * 画面は色・カーソルの移動（空白の代わり）・リンク（OSC 8）の制御の文字を含み、端末の幅で折り返される。
@@ -18,6 +19,8 @@ const OSC = /\x1b\][\s\S]*?(?:\x07|\x1b\\)/g;
 // biome-ignore lint/suspicious/noControlCharactersInRegex: 端末の制御の符号（ESC）を見つけるための式
 const CURSOR_FORWARD = /\x1b\[(\d*)C/g;
 // biome-ignore lint/suspicious/noControlCharactersInRegex: 端末の制御の符号（ESC）を見つけるための式
+const CURSOR_COLUMN = /\x1b\[\d*G/g;
+// biome-ignore lint/suspicious/noControlCharactersInRegex: 端末の制御の符号（ESC）を見つけるための式
 const CSI = /\x1b\[[0-9;?<>=]*[ -/]*[@-~]/g;
 // biome-ignore lint/suspicious/noControlCharactersInRegex: 端末の制御の符号（ESC）を見つけるための式
 const ESC_PAIR = /\x1b[@-Z\\-_]/g;
@@ -30,6 +33,8 @@ export function visibleText(raw: string): string {
       .replace(OSC, "")
       // カーソルを右へ（Ink は空白の代わりに使う）
       .replace(CURSOR_FORWARD, (_, n: string) => " ".repeat(Math.min(Number(n || "1"), 1000)))
+      // 列への移動（Ink は語のあいだの空白の代わりにも使う）。語がつながらないよう空白1つにする
+      .replace(CURSOR_COLUMN, " ")
       // そのほかの CSI（色・消去・移動・カーソルの表示）
       .replace(CSI, "")
       // そのほかの2文字のエスケープ
@@ -80,4 +85,90 @@ export function extractSetupToken(raw: string, columns?: number): string | null 
   }
   const body = token.replace(/^sk-ant-oat\d{2}-/, "");
   return body.length >= MIN_BODY ? token : null;
+}
+
+// ---- ログイン用の URL（準備の画面。5.14 の3の2） ----
+
+/** ログイン用の URL として受け入れるホスト（Claude のアカウントのログイン） */
+const LOGIN_HOSTS: ReadonlySet<string> = new Set(["claude.ai", "claude.com"]);
+const MAX_URL = 4096;
+// biome-ignore lint/suspicious/noControlCharactersInRegex: 端末の制御の符号（OSC 8 のリンク）を見つけるための式
+const OSC8 = /\x1b\]8;[^;\x07\x1b]*;([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
+const URL_IN_TEXT = /https:\/\/[!-~]+/g;
+const PRINTABLE_ASCII = /^[!-~]+$/;
+
+/**
+ * ログイン用の URL か：`https://claude.ai/…/oauth/authorize…`（claude.com も）。ほかのホスト・ポート・
+ * ユーザー名つき・空白や制御の文字を含むものは受け入れない（承認アプリが開くので、拒否側に倒す）
+ */
+export function isClaudeLoginUrl(value: string): boolean {
+  if (value.length > MAX_URL || !PRINTABLE_ASCII.test(value)) return false;
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  return (
+    url.protocol === "https:" &&
+    LOGIN_HOSTS.has(url.hostname) &&
+    url.port === "" &&
+    url.username === "" &&
+    url.password === "" &&
+    url.pathname.includes("/oauth/authorize")
+  );
+}
+
+/**
+ * 画面の記録から、ログイン用の URL を取り出す。リンク（OSC 8）の行き先を先に見て、なければ画面の文字から探す。
+ * 描き直されたときは最後に出たものを使う。見つからなければ null
+ */
+export function extractLoginUrl(raw: string): string | null {
+  let found: string | null = null;
+  for (const m of raw.matchAll(OSC8)) {
+    const target = m[1] ?? "";
+    if (isClaudeLoginUrl(target)) found = target;
+  }
+  if (found !== null) return found;
+  for (const m of visibleText(raw).matchAll(URL_IN_TEXT)) {
+    if (isClaudeLoginUrl(m[0])) found = m[0];
+  }
+  return found;
+}
+
+// ---- 擬似端末で動かす argv ----
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+/**
+ * `claude setup-token` を擬似端末（`script`。Linux は util-linux、macOS は BSD）の中で動かす argv。
+ * `columns` を渡すと、先に擬似端末の幅を広げる（`stty`）。URL・トークンが折り返されないようにするため
+ * （標準入力が端末でないと、擬似端末の幅は決まらない）
+ */
+export function setupTokenArgv(
+  platform: NodeJS.Platform,
+  script: string,
+  claude: string,
+  columns?: number,
+): string[] {
+  if (columns === undefined) {
+    return platform === "darwin"
+      ? [script, "-q", "/dev/null", claude, "setup-token"]
+      : [script, "-q", "-e", "-f", "-c", `${shellQuote(claude)} setup-token`, "/dev/null"];
+  }
+  const cols = Math.max(20, Math.min(Math.trunc(columns), 10_000));
+  const stty = `stty cols ${cols} rows 50 2>/dev/null`;
+  return platform === "darwin"
+    ? [script, "-q", "/dev/null", "/bin/sh", "-c", `${stty}; exec "$0" setup-token`, claude]
+    : [
+        script,
+        "-q",
+        "-e",
+        "-f",
+        "-c",
+        `${stty}; exec ${shellQuote(claude)} setup-token`,
+        "/dev/null",
+      ];
 }

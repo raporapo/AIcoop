@@ -108,6 +108,14 @@ export {
   summaryKindSchema,
   validateServiceCatalog,
 } from "./service.ts";
+// claude setup-token の画面から、トークンとログイン用の URL を取り出す（CL-24、5.14 の3の2）
+export {
+  extractLoginUrl,
+  extractSetupToken,
+  isClaudeLoginUrl,
+  setupTokenArgv,
+  visibleText,
+} from "./setup-token.ts";
 export {
   canTransitionTask,
   isTaskStatus,

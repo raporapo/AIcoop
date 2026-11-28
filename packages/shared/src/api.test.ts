@@ -1,5 +1,40 @@
 import { describe, expect, it } from "vitest";
-import { CONFIG_FILE_PATH_PATTERN } from "./api.ts";
+import { CONFIG_FILE_PATH_PATTERN, isRepositoryPattern } from "./api.ts";
+
+describe("5.14 の3の3：AI が触ってよいリポジトリの書き方", () => {
+  it.each(["raporapo/AIcoop", "raporapo/*", "a/b", "my-org/repo.name_2", "A1/x-y"])(
+    "%j は受け入れる",
+    (value) => {
+      expect(isRepositoryPattern(value)).toBe(true);
+    },
+  );
+
+  it.each([
+    "*/*",
+    "*/repo",
+    "../x",
+    "owner/..",
+    "owner/.",
+    "owner",
+    "owner/",
+    "/repo",
+    "owner/repo/extra",
+    "owner/re po",
+    " owner/repo",
+    "owner/repo ",
+    "owner/repo\n",
+    "owner/re*",
+    "-owner/repo",
+    "your-org/*",
+    "Your-Org/app",
+    `${"a".repeat(40)}/repo`,
+    `owner/${"r".repeat(101)}`,
+    "owner\\repo",
+    "",
+  ])("%j は受け入れない（拒否側）", (value) => {
+    expect(isRepositoryPattern(value)).toBe(false);
+  });
+});
 
 describe("5.14 の4の1：設定の画面で扱えるファイルのパス", () => {
   it.each([
