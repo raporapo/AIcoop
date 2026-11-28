@@ -23,7 +23,7 @@ import {
 } from "./lib/context.tsx";
 import { PendingProvider, usePending } from "./lib/pending.tsx";
 import { toFailure } from "./lib/resource.ts";
-import { type Route, useRoute } from "./lib/router.ts";
+import { navigate, parseRoute, type Route, useRoute } from "./lib/router.ts";
 import { AuditScreen } from "./screens/AuditScreen.tsx";
 import { DevicesScreen } from "./screens/DevicesScreen.tsx";
 import { GrantScreen } from "./screens/GrantScreen.tsx";
@@ -35,6 +35,7 @@ import { PairScreen } from "./screens/PairScreen.tsx";
 import { PendingScreen } from "./screens/PendingScreen.tsx";
 import { SecretsScreen } from "./screens/SecretsScreen.tsx";
 import { SettingsScreen } from "./screens/SettingsScreen.tsx";
+import { SetupScreen } from "./screens/SetupScreen.tsx";
 import { StatusScreen } from "./screens/StatusScreen.tsx";
 import { TaskScreen } from "./screens/TaskScreen.tsx";
 import { UsageScreen } from "./screens/UsageScreen.tsx";
@@ -108,6 +109,24 @@ export function App({ deps, update = NO_UPDATES }: { deps: AppDeps; update?: Upd
     const timer = setInterval(() => void checkSession(), deps.pollMs);
     return () => clearInterval(timer);
   }, [auth.kind, deps.pollMs, checkSession]);
+
+  // 5.14 の3：ログインしたあと、準備が済んでいなければ準備の画面に案内する（開いてから1回だけ。
+  // はじめの画面＝承認待ちの一覧のときだけ。ほかの画面へのリンクで開いたときは、そのまま）
+  const guided = useRef(false);
+  useEffect(() => {
+    if (auth.kind !== "logged_in" || guided.current) return;
+    guided.current = true;
+    void (async () => {
+      try {
+        const setup = await api.setup();
+        if (!setup.ready && parseRoute(window.location.hash).name === "pending") {
+          navigate({ name: "setup" });
+        }
+      } catch {
+        // 準備の確認が読めなくても、承認アプリはそのまま使える
+      }
+    })();
+  }, [auth.kind, api]);
 
   const endSession = useCallback(
     (reason: string) => {
@@ -302,7 +321,8 @@ const NAV_ITEMS: ReadonlyArray<{
   { href: "#/devices", label: "端末", match: ["devices"] },
   { href: "#/host-tools", label: "ホストの道具", match: ["host-tools"] },
   { href: "#/ceo", label: "CEO に頼む", match: ["ceo"] },
-  // 5.14 の4・5（PC のブラウザだけ）
+  // 5.14 の3・4・5（PC のブラウザだけ）
+  { href: "#/setup", label: "準備", match: ["setup"] },
   { href: "#/settings", label: "設定", match: ["settings"] },
   { href: "#/secrets", label: "資格", match: ["secrets"] },
 ];
@@ -363,6 +383,8 @@ function RoutedScreen({ route }: { route: Route }) {
       return <LaterScreen kind="host-tools" />;
     case "ceo":
       return <LaterScreen kind="ceo" />;
+    case "setup":
+      return <SetupScreen />;
     case "settings":
       return <SettingsScreen />;
     case "secrets":

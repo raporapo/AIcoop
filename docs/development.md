@@ -56,10 +56,10 @@ P1 の完了条件は設計書の第14章にある。OSに依存しない部品�
 - [x] P2：承認アプリ（PWA）の画面（PR #22）。要約のハッシュが daemon と一致することも受け入れテストで確かめる（PR #23）
 - [x] P2 の完了条件 S-1・S-4（PR #19、`daemon/p2-acceptance.test.ts`）・S-5（PR #25、`daemon/s5-acceptance.test.ts`）を本物の daemon で通す。`aicoop holds`・`aicoop grants`、決まった保留のファイルの片付け、保留・申請の上限（PR #25）
 - [ ] V-7（`rate_limit_event` に使用率が入っているか）：本物のログインで確かめる（設計書 16章）
-- [ ] PC の画面での準備と設定（設計書 5.14、D-26〜D-30。2026-11-28 にオーナーが決定）
+- [x] PC の画面での準備と設定（設計書 5.14、D-26〜D-30。2026-11-28 にオーナーが決定）
   - [x] ランチャーと `aicoop open`（5.14 の1・2。PR #31）
   - [x] 設定の画面と資格の画面（署名つきの変更。5.14 の4・5・6。daemon は PR #30、承認アプリは PR #32。受け入れ条件は `daemon/settings-acceptance.test.ts`）
-  - [ ] 準備の画面（Claude へのログイン・GitHub・イメージ。5.14 の3）
+  - [x] 準備の画面（Claude へのログイン・GitHub・イメージ。5.14 の3。daemon は PR #33、承認アプリは PR #34。受け入れは `daemon/setup-acceptance.test.ts`）
 
 ### この先（設計書 14章）
 
@@ -437,7 +437,7 @@ P1 の完了条件は設計書の第14章にある。OSに依存しない部品�
 | ST-25 | 資格の入力欄 | 中身の欄はすべて `type="password"`（`autocomplete="off"`、パスワード管理ソフトの保存の印も外す）。React の状態に入れず、「変更を作る」を押したら送る前に欄を空にする（ID の誤りなどで送らないときも空にする）。ID・App ID・Installation ID・クライアント ID はふつうの欄 | 5.14 の5「値を画面に残さない」 |
 | ST-26 | 秘密鍵（PEM）の改行 | 1行の欄は改行を落とすので、`-----BEGIN … -----` と `-----END … -----` のあいだを64文字ずつに折り直して送る | GitHub App の .pem を type=password の欄で受けるため |
 
-### 準備の画面（feat/setup-screen）
+### 準備の画面（PR #33・#34）
 
 | # | 内容 | いまの実装 | 理由 |
 |---|---|---|---|
@@ -456,3 +456,11 @@ P1 の完了条件は設計書の第14章にある。OSに依存しない部品�
 | SU-13 | your-org の書き換え | `groups.yaml` の `groups.<id>.ceiling[].params.repo` のうち、`your-org` を含む値を取り除き、入れたものを足す（同じ並びのほかの値は残す）。flow の並びは flow、block の並びは同じ字下げの block で、その値の範囲だけを置き換える（コメント・並び・ほかの行は1文字も変えない）。コメントの中の your-org と `roles.yaml` は書き換えない。your-org がもうなければ 409 `invalid_state`（設定の画面で書き換える） | 5.14 の3の3「groups.yaml の your-org/* の書き換え」。読み込みで効くのは ceiling（部署の上限）だけ |
 | SU-14 | GitHub の資格の登録 | 新しい道は作らず、資格の画面と同じ `POST /secrets/changes`（id `github`、kind `static_token` か `github_app`）で作り、署名する | 5.14 の5「準備の画面の Claude と GitHub の登録も、これと同じ署名を通す」 |
 | SU-15 | 箱のイメージ | `POST /images/build`（202。本文なし）・`GET /images/build`（`{build}`）。CLI の `aicoop daemon`（`aicoop start` も）が、`aicoop image build --home <home>` を子のプロセス（`NO_COLOR=1`）で動かすもの（`CliDeps.runImageBuild`）を `startDaemon` の `setup.runImageBuild` に差し込む。差し込みがない daemon・Windows では `unavailable`。段階は `[i/n] …` の行から読み、ログは最後の200行（1行500文字まで、制御の文字を除く）をメモリに。daemon を止めるときは子を止める。監査ログには書かない（`aicoop image build` も書かない。5.10 の表にない）。daemon のログに始めと終わりを書く | 4.4 の境界（Gondolin を daemon から呼ばない）。Gondolin は進み具合を process.stderr に直接書くので、子のプロセスにして行を受け取る |
+| SU-16 | 準備の画面への案内 | 承認アプリを開いてログインを確かめたとき（パスキーでログインしたときも）、1回だけ `GET /setup` を読み、`ready` でなく、いまの画面が承認待ちの一覧（はじめの画面）のときだけ `#/setup` に移す。ほかの画面へのリンク（保留の詳細など）で開いたとき・読めないときは移さない | 5.14 の3「ログインしたあと、準備が済んでいなければ」。通知のリンクから承認に向かうのを邪魔しない |
+| SU-17 | 承認アプリの道とナビ | `#/setup`。ナビの「設定」の前に「準備」を足した。印は daemon の `steps[].ok`（「✓ 済み」「○ まだ」） | 5.14 の3「何度でも開き直せる」 |
+| SU-18 | ログイン用の URL を開くボタン | daemon が返した URL を `isClaudeLoginUrl`（shared/api に移し、daemon と同じもの）で確かめてから、新しいタブ（`rel="noopener noreferrer"`）で開くリンクにする。形が違えばボタンを出さない | 乗っ取られた setup-token・daemon の応答から、ほかの URL を開かせない |
+| SU-19 | コードの欄 | ふつうの欄（`type="text"`、自動入力・スペルチェックなし）。React の状態に入れず、「コードを渡す」を押したら送る前に空にする。空・制御文字・512文字を超えるものは送らない（daemon も確かめる） | 1回だけ使うコードで、setup-token の外では使えないので、見えてよいとした |
+| SU-20 | GitHub の資格の欄 | 資格の画面と同じ部品（ST-25・ST-26）。ID は `github` に決め、種類は `static_token`・`github_app` だけを選べる | 5.14 の3の3 |
+| SU-21 | リポジトリの欄 | 1行に1つ（`,` でも区切る。前後の空白を除き、重ねたものは1つに）。`isRepositoryPattern` で確かめてから送る。your-org がもうなければ欄を出さず、いまのリポジトリと、設定の画面での書き換えを案内する | SU-12・SU-13 |
+| SU-22 | イメージの進み具合 | 作っているあいだは、承認アプリの読み直しの間隔（5秒）で `GET /images/build` を読み直す（「進み具合を読み直す」も押せる）。段階と、ログの最後の30行を出す。終わったら準備の確認を読み直す | 5.14 の3の4「進み具合を出す」 |
+| SU-23 | 済んだログインの変更 | 資格 anthropic の変更を署名したら、「登録しました」を出し、もう一度ログインを始められるようにする。準備の画面を開き直したとき、終わったログインの変更は、資格がもう登録されていれば出さない | 使い終えた変更を、もう一度署名させない |

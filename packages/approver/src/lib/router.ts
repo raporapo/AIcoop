@@ -5,6 +5,8 @@
 import { useEffect, useState } from "react";
 
 export type Route =
+  | { readonly name: "setup" }
+  | { readonly name: "settings" }
   | { readonly name: "pending" }
   | { readonly name: "hold"; readonly id: string }
   | { readonly name: "grant"; readonly id: string }
@@ -68,6 +70,7 @@ export function parseRoute(hash: string): Route {
     case "devices":
     case "host-tools":
     case "ceo":
+    case "setup":
     case "settings":
     case "secrets":
       return b === undefined ? { name: a } : notFound;

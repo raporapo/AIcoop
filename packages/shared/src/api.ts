@@ -787,6 +787,34 @@ export const MAX_IMAGE_BUILD_LINES = 200;
 /** 1行の長さの上限（超えた分は切る） */
 export const MAX_IMAGE_BUILD_LINE_CHARS = 500;
 
+/** ログイン用の URL として受け入れるホスト（Claude のアカウントのログイン） */
+const LOGIN_HOSTS: ReadonlySet<string> = new Set(["claude.ai", "claude.com"]);
+const MAX_LOGIN_URL_CHARS = 4096;
+const PRINTABLE_ASCII = /^[!-~]+$/;
+
+/**
+ * Claude へのログイン用の URL か：`https://claude.ai/…/oauth/authorize…`（claude.com も）。ほかのホスト・ポート・
+ * ユーザー名つき・空白や制御の文字を含むものは受け入れない。daemon が setup-token の画面から読み取るときと、
+ * 承認アプリが開く前の両方で確かめる（拒否側に倒す）
+ */
+export function isClaudeLoginUrl(value: string): boolean {
+  if (value.length > MAX_LOGIN_URL_CHARS || !PRINTABLE_ASCII.test(value)) return false;
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  return (
+    url.protocol === "https:" &&
+    LOGIN_HOSTS.has(url.hostname) &&
+    url.port === "" &&
+    url.username === "" &&
+    url.password === "" &&
+    url.pathname.includes("/oauth/authorize")
+  );
+}
+
 /** 雛形の GitHub のユーザー名・組織名（groups.yaml の `your-org/*`） */
 export const PLACEHOLDER_GITHUB_OWNER = "your-org";
 
