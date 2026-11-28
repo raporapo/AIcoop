@@ -30,6 +30,9 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm verify
+      # 承認アプリ（PWA。設計書 5.8）を作れること。daemon が http://localhost:7070/app/ で配る
+      - name: 承認アプリのビルド
+        run: pnpm --filter @aicoop/approver build
 
   # vm の箱（Gondolin の microVM）を本当に起こす結合テスト（16章 V-1・V-2・V-4・V-6、P1 完了条件1・3、5.1.4、5.1.7）。
   # 時間がかかるので verify とは別のジョブにする。
