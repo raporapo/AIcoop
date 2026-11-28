@@ -116,7 +116,7 @@ describe("5.5.1・6.6：cron トリガー", () => {
     ]);
   });
 
-  it("5.5.1：github・on_hold_resolved は P1 では動かさず、/status では enabled: false にする", () => {
+  it("5.5.1：github（P3）は動かさず enabled: false。on_hold_resolved（P2）は時刻では起きず、enabled: true で見せる", () => {
     const config = company(
       `triggers:
   - id: "dev-issue"
@@ -147,10 +147,32 @@ describe("5.5.1・6.6：cron トリガー", () => {
         id: "hold-result",
         type: "on_hold_resolved",
         member: "dev-implementer",
-        enabled: false,
+        enabled: true,
         next_run_at: null,
       },
     ]);
+  });
+
+  it("on_hold_resolved でも、enabled: false・この daemon で動かせない社員なら enabled: false", () => {
+    const config = company(
+      `triggers:
+  - id: "off"
+    type: on_hold_resolved
+    enabled: false
+    member: "dev-implementer"
+`,
+    ).load();
+    expect(start(config, []).views()[0]?.enabled).toBe(false);
+    const none = startTriggers({
+      config,
+      timers: clock,
+      now: clock.now,
+      logger,
+      canRun: () => ({ ok: false, message: "動かせない" }),
+      onCron: () => {},
+    });
+    sets.push(none);
+    expect(none.views()[0]?.enabled).toBe(false);
   });
 
   it("P1 で動かせない社員（箱のドライバーがない部署）の cron は動かさない", () => {

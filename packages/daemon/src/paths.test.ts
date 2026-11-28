@@ -46,6 +46,9 @@ describe("5.1.7・6.1：ホスト側のパス", () => {
     expect(p.holdFile("h_01JD6V8X3S0Q5W7KQ9M2T4R6YB")).toBe(
       join("/h", "state", "holds", "h_01JD6V8X3S0Q5W7KQ9M2T4R6YB.bin"),
     );
+    expect(p.holdResponseFile("h_01JD6V8X3S0Q5W7KQ9M2T4R6YB")).toBe(
+      join("/h", "state", "holds", "h_01JD6V8X3S0Q5W7KQ9M2T4R6YB.response.bin"),
+    );
     expect(p.stateDb).toBe(join("/h", "state.db"));
     expect(p.secrets).toBe(join("/h", "secrets.json"));
     expect(p.apiToken).toBe(join("/h", "runtime", "api_token"));
@@ -58,5 +61,6 @@ describe("5.1.7・6.1：ホスト側のパス", () => {
     expect(() => p.runDir("../../etc")).toThrow();
     expect(() => p.runDir("t_01JD6V8X3S0Q5W7KQ9M2T4R6YB")).toThrow();
     expect(() => p.holdFile("r_01JD6V8X3S0Q5W7KQ9M2T4R6YB")).toThrow();
+    expect(() => p.holdResponseFile("../x")).toThrow();
   });
 });

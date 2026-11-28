@@ -9,7 +9,12 @@ import { getRun, listRunsForTask } from "../db/runs.ts";
 import { getSession } from "../db/sessions.ts";
 import { getTask, taskResultFiles } from "../db/tasks.ts";
 import { getUsageState } from "../db/usage.ts";
-import { DEFAULT_GROUPS, DEFAULT_MEMBERS, DEFAULT_ROLES } from "../testing/company-config.ts";
+import {
+  DEFAULT_GROUPS,
+  DEFAULT_MEMBERS,
+  DEFAULT_ROLES,
+  P2_FILES,
+} from "../testing/company-config.ts";
 import { type FakeClaude, fakeEvents } from "../testing/fake-box.ts";
 import { createTestRunEnv, TEST_ANTHROPIC_TOKEN, type TestRunEnv } from "../testing/run-env.ts";
 import { BOX_ENV, claudeArgv } from "./claude-command.ts";
@@ -390,14 +395,47 @@ describe("5.1.1：部署ごとに1つの箱", () => {
 
 const quiet: FakeClaude = () => 0;
 
-describe("5.3.1 の受け入れ条件：箱の中の Claude Code に見える道具", () => {
-  it("道具ゲートの道具は report_result だけ", async () => {
+describe("5.3.1 の受け入れ条件：箱の中の Claude Code に見える道具（役職ごとに絞る。5.3.3）", () => {
+  it("部長でない役職には report_result・list_my_holds・request_access だけ。review_decision は一覧に出ず、呼べない", async () => {
     let tools: string[] = [];
+    let review: unknown;
     await runOnce(async (claude) => {
       tools = await claude.listTools();
+      review = await claude.callTool("review_decision", {
+        item_id: "h_01JD6V8X3S0Q5W7KQ9M2T4R6YB",
+        decision: "pass",
+        comment: "通す",
+      });
       return 0;
     });
-    expect(tools).toEqual(["report_result"]);
+    expect(tools).toEqual(["report_result", "list_my_holds", "request_access"]);
+    expect(review).toMatchObject({ isError: true });
+    expect(JSON.stringify(review)).toContain("not_allowed");
+    const claudeMd = readFileSync(
+      join(t.paths.memberHome("dev-implementer"), ".claude", "CLAUDE.md"),
+      "utf8",
+    );
+    expect(claudeMd).toContain("`mcp__aicoop__request_access`");
+    expect(claudeMd).not.toContain("`mcp__aicoop__review_decision`");
+  });
+
+  it("部長（manager）には review_decision も見せる", async () => {
+    t.cleanup();
+    t = createTestRunEnv({ files: P2_FILES });
+    let tools: string[] = [];
+    await runOnce(
+      async (claude) => {
+        tools = await claude.listTools();
+        return 0;
+      },
+      { memberId: "mgr-sales", groupId: "executives" },
+    );
+    expect(tools).toEqual(["report_result", "review_decision", "list_my_holds", "request_access"]);
+    const claudeMd = readFileSync(
+      join(t.paths.memberHome("mgr-sales"), ".claude", "CLAUDE.md"),
+      "utf8",
+    );
+    expect(claudeMd).toContain("`mcp__aicoop__review_decision`");
   });
 });
 

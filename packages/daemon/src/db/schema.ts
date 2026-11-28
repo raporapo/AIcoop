@@ -109,6 +109,8 @@ export const holds = sqliteTable(
     decidedBy: text("decided_by"),
     responseStatus: integer("response_status"),
     responsePath: text("response_path"),
+    /** 結果（replayed・replay_failed・rejected・expired）が出た時刻（版2。5.2.6 の4） */
+    resolvedAt: text("resolved_at"),
   },
   (t) => [index("holds_member_status").on(t.memberId, t.status)],
 );
@@ -132,6 +134,8 @@ export const grants = sqliteTable(
     startsAt: text("starts_at"),
     expiresAt: text("expires_at"),
     decidedBy: text("decided_by"),
+    /** 部長のコメント（版2。5.7.3 の2） */
+    managerComment: text("manager_comment"),
   },
   (t) => [index("grants_member_status").on(t.memberId, t.status)],
 );

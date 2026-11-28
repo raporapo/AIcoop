@@ -9,7 +9,10 @@
  * 3. 監査ログ `proxy.decision` を書く（パスはクエリを除く。本文は書かない。5.10）
  * 4. allow → `forward`（仮の札はこのときだけ本物に置き換わる。5.2.1 の2）
  *    deny → 403（5.2.5）
- *    hold → リクエストを `state/holds/<hold_id>.bin` に保存し、保留を作って 428（5.2.5、5.2.6 の1）
+ *    hold → 要約を作り（5.7.1 の2。drafts/send の下書き・マージする PR は本物の資格で取りに行く）、
+ *           リクエストを `state/holds/<hold_id>.bin` に保存し、保留を作って 428（5.2.5、5.2.6 の1）。
+ *           部長がいれば、同じトランザクションで部長のレビューのタスクを作る（5.7.1 の1・2）。
+ *           中身を確かめられなければ、保留にせず 403（`hold_failed`）
  *
  * 加えて、拒否側に倒す決まり：
  * - 実行が動いていない（Claude Code の起動前・終了後。箱を壊せずに残ったときも）ときは、何も送らない
@@ -26,7 +29,6 @@ import {
   effectivePermissionsFor,
   evaluateRequest,
   holdResponse,
-  managerOf,
   newId,
   type ProxiedRequest,
   type ProxyDecision,
@@ -36,9 +38,18 @@ import type { Logger } from "pino";
 import { appendAudit } from "../db/audit.ts";
 import { activeGrantsFor } from "../db/grants.ts";
 import { createHold } from "../db/holds.ts";
-import type { StateDb } from "../db/open.ts";
+import { type StateDb, writeTransaction } from "../db/open.ts";
+import { encodeHoldFile, savedRequestFrom } from "../holds/hold-file.ts";
+import { prepareHold } from "../holds/prepare.ts";
+import { createHoldReviewTask, reviewerFor } from "../holds/review.ts";
 import type { AicoopPaths } from "../paths.ts";
-import { containsPlaceholder, maskPlaceholders } from "../run/redact.ts";
+import { maskPlaceholders } from "../run/redact.ts";
+
+export {
+  HOLD_FILE_FORMAT,
+  readHoldFile,
+  type SavedHoldRequest,
+} from "../holds/hold-file.ts";
 
 /** 保留にできる本文の上限（5.2.6 の1） */
 export const MAX_HOLD_BODY_BYTES = 10 * 1024 * 1024;
@@ -47,9 +58,6 @@ export const MAX_HOLD_BODY_BYTES = 10 * 1024 * 1024;
 const MAX_AUDIT_PATH = 2048;
 
 const HOUR_MS = 60 * 60 * 1000;
-
-/** 保留に保存しないヘッダー（認証の情報）。その資格の header も除く */
-const DROPPED_HEADERS = new Set(["authorization", "proxy-authorization", "cookie"]);
 
 export interface ProxyContext {
   readonly db: StateDb;
@@ -69,6 +77,10 @@ export interface ProxyContext {
   readonly logger?: Logger;
   /** 時刻の元。なければ `db.now` */
   readonly now?: () => Date;
+  /** 保留の要約のために、本物の資格で下書き・PR を取りに行く fetch（なければ globalThis.fetch） */
+  readonly fetch?: typeof fetch;
+  /** 部長のレビューのタスクを作ったとき（順番待ちを見直す） */
+  readonly onTaskCreated?: () => void;
 }
 
 export function createProxyHandler(
@@ -155,47 +167,76 @@ export function createProxyHandler(
       return denyResponse(op.id, "too_large_to_hold");
     }
 
+    // 5.7.1 の2：要約を作り、送るリクエストを見せる中身に固める
+    const secretHeader = ctx.config.services.find((s) => s.id === op.service)?.secret?.header;
+    const prepared = await prepareHold({
+      config: ctx.config,
+      operation: op,
+      params: result.params,
+      memberId: ctx.memberId,
+      request: savedRequestFrom(req, body, secretHeader),
+      secretsPath: ctx.paths.secrets,
+      fetch: ctx.fetch ?? globalThis.fetch,
+      now: at,
+    });
+    if (!prepared.ok) {
+      audit("deny", op.id, "hold_failed", body.byteLength);
+      ctx.logger?.warn(
+        { run: ctx.runId, member: ctx.memberId, operation: op.id, why: prepared.message },
+        "保留の中身を確かめられなかったので、保留にしませんでした",
+      );
+      return denyResponse(op.id, "hold_failed");
+    }
+    const toSave = prepared.request;
+    if (toSave.body.byteLength > MAX_HOLD_BODY_BYTES) {
+      audit("deny", op.id, "too_large_to_hold", toSave.body.byteLength);
+      return denyResponse(op.id, "too_large_to_hold");
+    }
+    // 中身を取りに行っているあいだに、実行が終わった
+    if (!ctx.active()) {
+      audit("deny", op.id, "run_not_active", body.byteLength);
+      return denyResponse(null, "not_allowed");
+    }
+
     const holdId = newId("hold", at.getTime());
     const file = ctx.paths.holdFile(holdId);
-    const secretHeader = ctx.config.services.find((s) => s.id === op.service)?.secret?.header;
     mkdirSync(ctx.paths.holdsDir, { recursive: true });
-    writeFileSync(file, encodeHoldFile(req, body, secretHeader), { mode: 0o600 });
+    writeFileSync(file, encodeHoldFile(toSave), { mode: 0o600 });
+    const manager = reviewerFor(ctx.config, holdGroup);
     try {
-      createHold(ctx.db, {
-        id: holdId,
-        runId: ctx.runId,
-        taskId: ctx.taskId,
-        memberId: ctx.memberId,
-        groupId: holdGroup,
-        thread: ctx.thread,
-        service: op.service,
-        operation: op.name,
-        params: result.params,
-        requestPath: file,
-        requestBytes: body.byteLength,
-        // 要約の中身（5.7.1 の2 の表）は、部長のレビューを作る P2 で作る
-        summary: {
-          kind: op.summary ?? "default",
-          method: req.method,
-          host: req.host,
-          path,
-          body_bytes: body.byteLength,
-        },
-        status:
-          managerOf(ctx.config, holdGroup) === undefined ? "pending_owner" : "pending_manager",
-        expiresAt: new Date(
-          at.getTime() + ctx.config.aicoop.holds.ttl_hours * HOUR_MS,
-        ).toISOString(),
+      writeTransaction(ctx.db, () => {
+        const hold = createHold(ctx.db, {
+          id: holdId,
+          runId: ctx.runId,
+          taskId: ctx.taskId,
+          memberId: ctx.memberId,
+          groupId: holdGroup,
+          thread: ctx.thread,
+          service: op.service,
+          operation: op.name,
+          params: result.params,
+          requestPath: file,
+          requestBytes: toSave.body.byteLength,
+          summary: prepared.summary,
+          status: manager === undefined ? "pending_owner" : "pending_manager",
+          expiresAt: new Date(
+            at.getTime() + ctx.config.aicoop.holds.ttl_hours * HOUR_MS,
+          ).toISOString(),
+        });
+        if (manager !== undefined) {
+          createHoldReviewTask(ctx, ctx.config, manager, hold, prepared.summary);
+        }
       });
     } catch (e) {
       rmSync(file, { force: true });
       throw e;
     }
-    audit("hold", op.id, null, body.byteLength);
+    audit("hold", op.id, null, toSave.body.byteLength);
     ctx.logger?.info(
-      { run: ctx.runId, member: ctx.memberId, hold: holdId, operation: op.id },
+      { run: ctx.runId, member: ctx.memberId, hold: holdId, operation: op.id, manager },
       "重い操作を保留にしました",
     );
+    if (manager !== undefined) ctx.onTaskCreated?.();
     return holdResponse(holdId);
   };
 }
@@ -204,73 +245,4 @@ export function createProxyHandler(
 function auditPath(path: string): string {
   const bare = maskPlaceholders(path.split(/[?#]/, 1)[0] ?? "");
   return bare.length > MAX_AUDIT_PATH ? `${bare.slice(0, MAX_AUDIT_PATH)}…` : bare;
-}
-
-// ---- 保留したリクエストのファイル（state/holds/<hold_id>.bin） ----
-
-/** ファイルの形の名前（1行目の JSON の format） */
-export const HOLD_FILE_FORMAT = "aicoop-hold/1";
-
-export interface SavedHoldRequest {
-  readonly method: string;
-  /** クエリ文字列を含む URL */
-  readonly url: string;
-  /** 認証ヘッダー・cookie・その資格のヘッダー・仮の札の入ったヘッダーを除いたもの（名前は小文字） */
-  readonly headers: Readonly<Record<string, string>>;
-  readonly body: Uint8Array;
-}
-
-/**
- * 1行目に `{"format","method","url","headers","body_bytes"}` の JSON と改行、そのあとに本文をそのまま置く。
- * - 認証ヘッダー・cookie・その資格の `header` は保存しない（5.2.6 の1。再送のときに本物を付け直す）
- * - 仮の札は、どのヘッダーに入っていても置き換わる（C-3）ので、仮の札の入ったヘッダーは名前を問わず保存しない
- * - URL（クエリ）の中の仮の札は伏せ字にする（クエリでは置き換わらない。11.5）
- * 本文は、送るものとして保存する（5.2.1 の3：本文の中の仮の札は置き換わらない）
- */
-function encodeHoldFile(
-  req: ProxiedRequest,
-  body: Uint8Array,
-  secretHeader: string | undefined,
-): Buffer {
-  const headers: Record<string, string> = {};
-  for (const [name, value] of Object.entries(req.headers)) {
-    const lower = name.toLowerCase();
-    if (DROPPED_HEADERS.has(lower) || lower === secretHeader) continue;
-    if (containsPlaceholder(value)) continue;
-    headers[lower] = value;
-  }
-  const host = req.host.includes(":") ? `[${req.host}]` : req.host;
-  const head = JSON.stringify({
-    format: HOLD_FILE_FORMAT,
-    method: req.method,
-    url: maskPlaceholders(`${req.protocol}://${host}${req.path}`),
-    headers,
-    body_bytes: body.byteLength,
-  });
-  return Buffer.concat([Buffer.from(`${head}\n`, "utf8"), body]);
-}
-
-/** 保存したリクエストを読む（再送・承認アプリでの表示。P2） */
-export function readHoldFile(bytes: Uint8Array): SavedHoldRequest {
-  const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const newline = buffer.indexOf(0x0a);
-  if (newline < 0) throw new Error("保留のファイルの形が違います");
-  const head = JSON.parse(buffer.subarray(0, newline).toString("utf8")) as Record<string, unknown>;
-  const body = buffer.subarray(newline + 1);
-  if (
-    head.format !== HOLD_FILE_FORMAT ||
-    typeof head.method !== "string" ||
-    typeof head.url !== "string" ||
-    typeof head.headers !== "object" ||
-    head.headers === null ||
-    head.body_bytes !== body.byteLength
-  ) {
-    throw new Error("保留のファイルの形が違います");
-  }
-  return {
-    method: head.method,
-    url: head.url,
-    headers: head.headers as Record<string, string>,
-    body: new Uint8Array(body),
-  };
 }

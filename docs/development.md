@@ -51,7 +51,10 @@ P1 の完了条件は設計書の第14章にある。OSに依存しない部品�
 
 ### 次に作るもの
 
-- [ ] P2：保留と再送・部長のレビュー・一時権限（5.2.6、5.7）、パスキーでの承認と `aicoop pair --local`（5.8）、承認アプリ（PWA）
+- [x] P2：パスキーでの承認・`aicoop pair --local`・ログイン・`aicoop devices`（5.8。PR #18）
+- [x] P2：保留と再送・部長のレビュー・一時権限（5.2.6、5.7）、S-1・S-4 の受け入れテスト（PR #19）
+- [ ] P2：承認アプリ（PWA）の画面
+- [ ] P2 の完了条件（S-1・S-4・S-5、V-7）を通す結合テスト
 
 ## 設計書に記録が必要な決定（未記録）
 
@@ -282,3 +285,55 @@ P1 の完了条件は設計書の第14章にある。OSに依存しない部品�
 | E-1 | 5.4.2 の環境変数の表 | vm の箱だけ `IS_SANDBOX=1` を足す | 箱の中のコマンドは root で動き、Claude Code は root では `--dangerously-skip-permissions` を断って何も出さずに終わる（本物の Claude Code で見つけた不具合）。root でないユーザーで動かす案は、Gondolin の exec にユーザーを選ぶ口がなく、マウントの権限も変わるので退けた |
 | E-2 | 本物の VM の結合テスト | `AICOOP_VM_E2E=1` のときだけ動かす。CI では偽の `claude` のイメージと本物の Claude Code のイメージを毎回作る。forward したリクエストは本物の GitHub に偽のトークンで届く | 完了条件を変更のたびに確かめ続ける |
 | E-3 | WebSearch | 箱の中では常に使わせない（起動の引数 `--disallowedTools WebSearch` と管理設定の `permissions.deny`） | WebSearch は Anthropic の側で動き、素通しの通信の中を通るので、資格プロキシの判定を通らずに外へ文字列を出せる（T-3）。Web は `web.read` で読む |
+
+### 端末・パスキーでのログイン・承認の署名（PR #18）
+
+| # | 内容 | いまの実装 | 理由 |
+|---|---|---|---|
+| AP-1 | 端末の登録・取り消しの監査ログ | 種類 `device.state`、data は `{from: null\|"active", to: "active"\|"revoked", by}`、subject は端末ID。名前などは書かない | 5.10 の3の表にない。取り消しは `approval` ではない |
+| AP-2 | 署名カウンターの「増加」 | WebAuthn の仕様と @simplewebauthn/server のとおり：保存した値か新しい値が0より大きければ、増えなければ拒否（0 に戻るのも拒否）。両方0（数えない認証器）なら受ける | 同期するパスキー（iCloud キーチェーン・Google パスワードマネージャー）はずっと0。常に増加を求めると使えない。使い回しは nonce と1回限りのチャレンジで防ぐ（テストで確かめた） |
+| AP-3 | ペアリングのコード | Crockford の base32 で10文字（50ビット）、`XXXXX-XXXXX`。ハイフン・空白・小文字は許す。違うコード（知らない・壊れた・取り消したもの）が合わせて5回来たら、いまのコードも無効（`too_many_attempts`）。有効なコードは同時に1つ（新しいコードで前のコードは `superseded`）。状態はメモリだけ | 5.8 の2の1に長さ・回数の定めがない |
+| AP-4 | 確認コード | SHA-256（正規化JSON `{v:"aicoop-pair-local-1", code, credential_id, public_key}`）の先頭4バイトを 10⁶ で割った余り、6桁 | 「パスキーの公開鍵（とコード）から決まる6桁」 |
+| AP-5 | 登録の期限 | コードの10分は `y` まで含む（登録したまま10分たてば、`y` を押しても有効にしない）。登録の確かめに失敗したら、そのチャレンジは捨てる。名前・確認コードを返すのは registered・activated のときだけ | 拒否側 |
+| AP-6 | パスキーの作り方 | rpName `AIcoop（会社名）`、userID は SHA-256(`aicoop-owner:` + company_id) の先頭16バイト、residentKey `preferred`、UV `required`、attestation `none`、excludeCredentials は登録済みのすべて（取り消したものも）、方式は EdDSA・ES256・RS256（ML-DSA は入れない）、timeout 2分。応答の id と authenticatorData の資格情報の ID が違えば拒否 | ML-DSA は Node の実験的な機能で、警告が出る。同じ認証器を2回登録させない |
+| AP-7 | @simplewebauthn/server が確かめないもの | iframe の中の応答（`crossOrigin: true`・`topOrigin` つき）は自分で拒否。署名の応答の資格情報の ID が、確かめる端末のものかも自分で確かめる | ライブラリは topOrigin のない crossOrigin を通し、資格情報の ID は比べない |
+| AP-8 | セッション | 32バイトの乱数（base64url）。サーバーは SHA-256 だけをメモリに持つ（daemon を起動し直すとログアウト）。期限は8時間（延ばさない）。32個まで（古いものから捨てる）。リクエストのたびに端末が有効かを state.db で確かめる。端末を取り消したらすぐ消す | 期限の定めがない |
+| AP-9 | クッキーの属性 | `HttpOnly; SameSite=Strict; Path=/api/v1; Max-Age=28800`。`Secure` は付けない | 指示は `Path=/` だったが、クッキーはポートで分かれず、localhost のほかのポートのサーバーにも送られる。送る範囲を API に絞った（承認アプリの動きは変わらない）。http://localhost で配るので Secure は付けられない |
+| AP-10 | CSRF | クッキーで来た GET・HEAD 以外は、`Origin` が `http://localhost:<port>` と完全に一致しなければ 403 `forbidden_origin`（新しいエラーコード）。`Sec-Fetch-Site` があれば `same-origin`・`none` だけ（GET でも）。認証なしの POST（ペアリング・ログイン）も `Origin` を確かめる | SameSite=Strict でも、localhost のほかのポートは同じサイトなので、クッキーが送られる |
+| AP-11 | 道ごとの認証 | Bearer だけ：`/shutdown`・`/reload`・`/pairing/local*`。クッキーだけ：`/approvals/*`・`/auth/me`・`/auth/logout`。認証なし：`/pairing/options`・`/pairing/register`・`/auth/login/*`・`/app/*`・`/`。そのほか（既存の道、`/devices*`、これから足す道）は両方。`Authorization` があれば Bearer として確かめ、違えばクッキーに切り替えない | 指示のとおり。承認は承認アプリの署名だけ（P-4）。止める・読み直す・登録のコードは CLI だけ |
+| AP-12 | 確かめる順（DM-4 を変えた） | Host → 本文の上限 → 認証なしの道 → 認証。認証なしの道は、Hono の道として認証より前に登録する | パスの書き方（%xx など）で、認証の分け方と道が食い違わないように |
+| AP-13 | 承認アプリからの操作の actor | タスクの作成・取り消し、端末の取り消しは `owner:<device_id>`（CLI は `owner:cli` のまま） | どの端末がしたかを監査ログに残す |
+| AP-14 | 出した payload の覚え方 | daemon のメモリだけ（起動し直すと、出してあった payload は使えない）。64個まで。期限を過ぎても10分は覚えておき、`approval_expired` と答える。assert で1回使ったら（失敗しても）捨てる。出した端末以外のセッションからは `payload_mismatch` | 拒否側。決まった形がない |
+| AP-15 | assert で確かめる順とエラー | 形 → nonce（知らないもの：使い済みなら `nonce_used`、でなければ `payload_mismatch`）→ 正規化JSON の完全一致 → 出した端末 → 期限（`expires_at` ちょうどまで受ける）→ 署名 → トランザクションの中で used_nonces の期限切れを消す → nonce → 対象がまだ待っているか（`not_pending`）→ 要約の SHA-256 が payload と同じか（違えば `payload_mismatch`）→ カウンターの比較更新 → used_nonces → approvals → 監査ログ `approval` → `target.apply`。HTTP は `signature_invalid`・`payload_mismatch`・`approval_expired` が 400、`nonce_used`・`not_pending` が 409、`pairing_invalid` が 404 | オーナーが見た要約と、効力を持つものを一致させる |
+| AP-16 | `afterApply` | 応答は待たない（`subject_status` は apply のあとの状態）。daemon を止めるときは終わるのを待つ。失敗はログだけで、承認の記録は残す | 保留の再送で応答が遅れないように |
+| AP-17 | approvals の保存の形 | `payload` も `assertion` も正規化JSON | あとで同じバイト列で確かめ直せる |
+| AP-18 | used_nonces の掃除 | assert のたびに、期限を過ぎた行を消す | 7.2「期限を過ぎたら消す」 |
+| AP-19 | 承認アプリの配信 | 認証なし。拡張子のないパスは index.html、拡張子があって無ければ 404。`.` で始まる名前・`\`・`/`（%2f）・`:` などを含む名前・制御文字は 404、realpath で dist の外は 404、16 MiB まで。CSP `default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'`、`X-Frame-Options: DENY`、`Referrer-Policy: no-referrer`、COOP・CORP `same-origin`、`Cache-Control: no-store`。dist が無ければ 503 の HTML。`127.0.0.1` で開いたら `localhost` へ転送 | パスキーの RP ID は localhost なので、127.0.0.1 の画面では使えない。承認アプリ（P2-c）は inline の script・style を使わないこと |
+| AP-20 | ログインの options | 有効な端末がなければ 409 `invalid_state`。チャレンジは2分・1回限り（確かめる前に消す）、16個まで | 拒否側 |
+| AP-21 | 端末の名前 | 前後の空白を除いて1〜40文字、制御文字・書式文字・行区切りを含まない | api.ts の「1〜40文字」 |
+| AP-22 | CLI の決まり | `pair --local` は端末（TTY）からだけ（`--yes` はない）。承知は `y`・`yes`・`はい` だけ。Ctrl+C（待ち・確かめのどちらでも）はコードを取り消して 130、N は 1。`pair`（`--local` なし）は 2。`devices revoke` は端末なら `[y/N]`、でなければ `--yes` が要る（2）。ない端末・取り消し済みは 1。`approve`・`reject` などは「承認をするコマンドはない」と案内（2） | 確認コードを見比べるのは人。9.1・P-4 |
+| AP-23 | 承認アプリからの端末の取り消し | ログインしていればできる（自分の端末も）。パスキーの署名は要らない | 5.8 の4の(6)。なくした端末をすぐ止めるのは守りを強める側。消されても CLI で登録し直せる |
+
+設計書の本文では、5.10 の表に `device.state`（端末の登録・取り消し）、9.2 の表に端末・ペアリング・ログイン・承認アプリの配信の道を足す必要がある。
+
+### 保留と再送・一時権限・部長のレビュー（PR #19）
+
+| # | 内容 | いまの実装 | 理由 |
+|---|---|---|---|
+| HL-1 | state.db 版2 | `holds.resolved_at`（結果が出た時刻）・`grants.manager_comment` を足した | 「前回の実行以降に結果が出たもの」を決めるため。7.2 の grants に部長のコメントの列がない |
+| HL-2 | `drafts/send` の保留 | 取ってきた下書きの中身で `messages/send` に固めて保存・再送する（下書きは残る） | 社員は `draft.update` を持つので、ID のまま送ると承認のあとに中身を差し替えられる |
+| HL-3 | `pr.merge` の保留 | 本文に取得時の head の `sha` を付ける（指定済みで違えば警告） | 承認のあとの push で中身を変えさせない |
+| HL-4 | 下書き・PR を取れないとき | 保留にせず 403 `hold_failed`（DenyReason に追加、プロンプトにも説明） | 中身を確かめられないものを承認に回さない |
+| HL-5 | 二重に送らない方法 | 送る前に `response_path` を書く（claim）。起動時、印のある approved は送り直さず `replay_failed`、印のない approved は期限内なら送る | 5.2.6 の2「1回だけ」 |
+| HL-6 | 再送の直前の確かめ | いまの設定で判定が deny・操作が食い違う・http・既定でないポートなら送らず `replay_failed` | 設定から外した操作を送らない |
+| HL-7 | 資格ヘッダーの形 | 保存時に `Bearer GONDOLIN_SECRET_****` のような形（auth.template）を残し、再送で本物を入れる。なければ `Bearer` | Bearer 以外の資格でも送った形のまま付け直す |
+| HL-8 | 結果の範囲 | replayed・replay_failed・rejected・expired すべてを結果とし、タスク本文と on_hold_resolved の対象にする | 却下・期限切れも続きを考えるのに要る |
+| HL-9 | on_hold_resolved の完了の条件 | 「保留の結果を確かめ、続きの作業をして、report_result で報告した」 | 6.6 で書けないので固定 |
+| HL-10 | 申請中の一時権限の期限 | 申請から `holds.ttl_hours` で expired | 決まらない申請を残さない（拒否側） |
+| HL-11 | レビューのタスクのスレッド | 毎回新しい（`task-<task_id>`） | 前のレビューの外の文章を持ち込ませない |
+| HL-12 | review_decision の上限 | comment は必須・2000文字・制御文字不可。担当外と無い項目は同じ not_allowed。`k_` は not_allowed（P4） | 9.3 に上限がない |
+| HL-13 | request_access の params | 値は文字列か配列。上限の範囲の中か（glob は同じ・`*`・前方一致の `*` の中だけ）。mode は範囲を含む ceiling の項目の厳しい方 | 広さを比べられないものは範囲の外 |
+| HL-14 | 承認の対象 | pending_owner で期限内のときだけ。部長のレビュー前はオーナーも決められない | 「部長 → オーナー」の順 |
+| HL-15 | API の形 | `HoldView.operation` は `<service>.<operation>`。`HoldView.summary` は要約＋`manager_comment`（describe と同じ）。`GrantView` に `manager_comment`・`summary` を足した。`GET /holds` は status がなければすべての状態 | summary_sha256 のもとを API と describe でそろえる |
+| HL-16 | 要約に足したもの | gmail は From・添付ファイル名・警告（同名ヘッダーが複数・Resent-*・読めない文字コード）、pr.merge は head・base・merge_method | 宛先を読み違えて隠されないように |
+| HL-17 | タスク本文の保留の結果 | 20件まで、応答の本文は UTF-8 で読めるときだけ先頭4000文字 | プロンプトを大きくしすぎない |

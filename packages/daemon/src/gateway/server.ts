@@ -10,7 +10,8 @@
  * - vm の箱からは `http://aicoop.internal/mcp` で届く（Gondolin の `tcp.hosts`。5.3.1 の2）ので、
  *   `Host: aicoop.internal` を受け付ける。それ以外の Host（DNS リバインディング）と、ブラウザからの
  *   リクエスト（`Origin` あり）は受け付けない
- * - P1 の道具は `report_result` だけ（5.3.3）。ほかの道具は一覧に出さず、呼べない
+ * - `report_result` はすべての役職に出す。ほかの組み込み道具（P2：`review_decision`・`list_my_holds`・
+ *   `request_access`）は、呼ぶ側がその役職に見せるものだけを `tools` で渡す。一覧にない道具は呼べない（5.3.1）
  * - 呼び出しは監査ログ `gateway.call`（社員、道具名、引数の正規化JSONの SHA-256、成否）に書く（5.10）
  * - 組み込み道具のエラーは、`isError: true` と `{"error": "<コード>", "message": "..."}`（9.3）
  *
@@ -40,12 +41,25 @@ import {
 
 export type { ReportResult } from "./report-result.ts";
 
-/** 9.3 の道具ゲートのエラーのコード（P1 で使うもの） */
-export type GatewayErrorCode = "invalid_input" | "not_allowed";
+/** 9.3 の道具ゲートのエラーのコード（P2 までに使うもの） */
+export type GatewayErrorCode = "invalid_input" | "not_allowed" | "outside_ceiling" | "too_long";
 
 /** onReport がこれを投げたら、記録せずに not_allowed を返す（例：タスクがもう動いていない） */
 export class ReportRejectedError extends Error {
   override name = "ReportRejectedError";
+}
+
+/** 組み込み道具の結果（成功は JSON にして返す。失敗は 9.3 の形） */
+export type GatewayToolResult =
+  | { readonly ok: true; readonly value: unknown }
+  | { readonly ok: false; readonly code: GatewayErrorCode; readonly message: string };
+
+/** report_result のほかの組み込み道具（5.3.3）。役職ごとに、見せるものだけを渡す（5.3.1） */
+export interface GatewayTool {
+  readonly name: string;
+  readonly description: string;
+  readonly inputSchema: { readonly type: "object" } & Record<string, unknown>;
+  call(args: unknown): Promise<GatewayToolResult> | GatewayToolResult;
 }
 
 export interface GatewayOptions {
@@ -58,6 +72,8 @@ export interface GatewayOptions {
   readonly workDir: string;
   /** report_result を受け付けたとき。ReportRejectedError を投げたら記録しない */
   readonly onReport: (result: ReportResult) => void | Promise<void>;
+  /** report_result のほかに見せる道具（その役職の社員に見せるものだけ）。一覧にないものは呼べない */
+  readonly tools?: readonly GatewayTool[];
   readonly logger?: Logger;
 }
 
@@ -165,6 +181,14 @@ function createMcpServer(options: GatewayOptions): Server {
           properties: Record<string, object>;
         },
       },
+      ...(options.tools ?? []).map((tool) => ({
+        name: tool.name,
+        description: tool.description,
+        inputSchema: tool.inputSchema as unknown as {
+          type: "object";
+          properties: Record<string, object>;
+        },
+      })),
     ],
   }));
 
@@ -195,7 +219,28 @@ async function callTool(
   args: unknown,
 ): Promise<CallToolResult> {
   if (name !== REPORT_RESULT) {
-    return toolError("not_allowed", "この道具は使えません。使える道具は tools/list のものだけです");
+    const tool = (options.tools ?? []).find((t) => t.name === name);
+    if (tool === undefined) {
+      return toolError(
+        "not_allowed",
+        "この道具は使えません。使える道具は tools/list のものだけです",
+      );
+    }
+    let result: GatewayToolResult;
+    try {
+      result = await tool.call(args);
+    } catch (error) {
+      options.logger?.error(
+        { tool: tool.name, err: errorName(error) },
+        "組み込み道具で例外が起きました",
+      );
+      return toolError(
+        "not_allowed",
+        "この道具は、いま使えません（制御サーバーの中でエラーが起きました）",
+      );
+    }
+    if (!result.ok) return toolError(result.code, result.message);
+    return { content: [{ type: "text", text: JSON.stringify(result.value) }] };
   }
   const checked = validateReportResult(args, options.workDir);
   if (!checked.ok) return toolError("invalid_input", checked.message);

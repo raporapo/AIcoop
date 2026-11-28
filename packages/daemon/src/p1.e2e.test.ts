@@ -321,8 +321,9 @@ describe("P1 の完了条件（14章）：雛形の会社・本物の daemon と
 
   it("P1 完了条件4（手動）：report_result で報告すると done になり、要約とファイルが API で見え、箱が壊され、runtime/<run_id>/ が消える", () => {
     const first = seen[0] as SeenInBox;
-    // 5.3.1：道具ゲートの道具は report_result だけ。セッションなしの JSON-RPC で呼べる
-    expect(first.tools).toEqual(["report_result"]);
+    // 5.3.1：道具ゲートの道具は、役職に見せるものだけ（P2 で list_my_holds・request_access が足された。
+    // review_decision は部長だけ）。セッションなしの JSON-RPC で呼べる
+    expect(first.tools).toEqual(["report_result", "list_my_holds", "request_access"]);
     // 道具ゲートは、その実行のトークン（mcp.json の headers）のないリクエストに答えない
     expect(first.gatewayAuthorization).toMatch(/^Bearer [A-Za-z0-9_-]{43}$/);
     expect(first.mcp.noToken?.status).toBe(401);

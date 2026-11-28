@@ -52,14 +52,18 @@ import {
   transitionTask,
 } from "../db/tasks.ts";
 import { setUsageState } from "../db/usage.ts";
+import { holdToolNamesFor, holdTools } from "../gateway/hold-tools.ts";
 import {
   type Gateway,
   openGateway,
   ReportRejectedError,
   type ReportResult,
 } from "../gateway/server.ts";
+import type { HoldDeps } from "../holds/deps.ts";
+import { holdResultsForRun } from "../holds/results.ts";
 import { createProxyHandler } from "../proxy/decide.ts";
 import { CredentialError, prepareBoxSecrets, readAnthropicToken } from "../secrets/issue.ts";
+import { checkRunnableMember } from "../triggers/runnable.ts";
 import { BOX_ENV, claudeArgv, claudeExecEnv, isSafeSessionId } from "./claude-command.ts";
 import { cleanupBeforeRun } from "./cleanup.ts";
 import { GUEST_PATHS, vmMounts } from "./mounts.ts";
@@ -290,13 +294,32 @@ class RunExecution {
     const prompts = this.#prompts();
     this.#checkStop();
 
+    // 保留・一時権限の仕事（部長のレビュー・申請・保留の結果）は、この実行の設定で行う
+    const holdDeps: HoldDeps = {
+      db,
+      paths: this.#env.paths,
+      config: () => this.#config,
+      fetch: this.#env.fetch ?? globalThis.fetch,
+      now: this.#now,
+      logger: this.#log,
+      ...(this.#env.onTaskCreated !== undefined && { onTaskCreated: this.#env.onTaskCreated }),
+      canRun: (config, memberId) => checkRunnableMember(config, memberId, this.#env.drivers).ok,
+    };
+
     // 道具ゲートを開いてから実行を作る（実行にはゲートのポートを書く）
+    // 5.3.1：役職に見せる道具だけを渡す（見せない道具は一覧に出ず、呼べない）
     this.#gateway = await openGateway({
       db,
       memberId: member.id,
       taskId: this.#task.id,
       workDir: this.#env.paths.groupWork(this.#groupId),
       onReport: (result) => this.#onReport(result),
+      tools: holdTools({
+        deps: holdDeps,
+        memberId: member.id,
+        roleId: member.role.id,
+        active: () => this.#acceptsCalls(),
+      }),
       logger: this.#log,
     });
     const resume = this.#resumeSessionId();
@@ -349,7 +372,7 @@ class RunExecution {
       buildToolsAndRules({
         catalog: this.#config.catalog,
         effective,
-        tools: [],
+        tools: holdToolNamesFor(member.role.id),
         workDir: GUEST_PATHS.work,
       }) + missingSecretsNote(prepared.missing);
     writeHomeClaudeFiles(
@@ -393,6 +416,8 @@ class RunExecution {
           logger: this.#log,
           now: this.#now,
           active: () => this.#claudeActive,
+          fetch: holdDeps.fetch,
+          ...(this.#env.onTaskCreated !== undefined && { onTaskCreated: this.#env.onTaskCreated }),
         }),
       },
     };
@@ -421,13 +446,18 @@ class RunExecution {
     // 取り消しが transition のあいだに来ていたら、すぐ止める
     this.#checkStop();
 
-    // 5.4.2：claude -p を起動する
+    // 5.4.2：claude -p を起動する。5.2.6 の4：前回の実行以降に結果が出た保留を入れる
     const prompt = buildTaskPrompt({
       purpose: this.#task.purpose,
       doneWhen: this.#task.doneWhen,
       replyAs: this.#task.replyAs,
       context: this.#task.context,
       contextUntrusted: this.#task.contextUntrusted,
+      holdResults: holdResultsForRun(holdDeps, {
+        memberId: member.id,
+        runId: run.id,
+        taskHoldId: this.#task.holdId,
+      }),
     });
     const argv = (session: string | null) =>
       claudeArgv({
@@ -672,14 +702,16 @@ class RunExecution {
     });
   }
 
+  /** Claude Code が動いていて、止めると決めていないあいだだけ、道具の呼び出しを受け付ける */
+  #acceptsCalls(): boolean {
+    return (
+      this.#phase === "running" && this.#claudeActive && this.#cancel === null && !this.#timedOut
+    );
+  }
+
   /** 5.5.6 の1：report_result を記録する（2回目以降は、あとのもので上書きする） */
   #onReport(result: ReportResult): void {
-    if (
-      this.#phase !== "running" ||
-      !this.#claudeActive ||
-      this.#cancel !== null ||
-      this.#timedOut
-    ) {
+    if (!this.#acceptsCalls()) {
       throw new ReportRejectedError("このタスクはもう動いていないので、結果を記録できません");
     }
     try {

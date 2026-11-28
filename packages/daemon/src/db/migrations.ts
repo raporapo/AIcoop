@@ -200,4 +200,10 @@ BEGIN
   SELECT RAISE(ABORT, '監査ログの行は書き換えられません（追記だけです）');
 END;
 `,
+  // 版2（P2）：保留の結果が出た時刻（5.2.6 の4・5.4.3 の3「前回の実行以降に結果が出たもの」）と、
+  // 一時権限の部長のコメント（5.7.3 の2・5.7.1 の4）。どちらも設計書 7.2 への記録待ち
+  `
+ALTER TABLE holds ADD COLUMN resolved_at TEXT;
+ALTER TABLE grants ADD COLUMN manager_comment TEXT;
+`,
 ];

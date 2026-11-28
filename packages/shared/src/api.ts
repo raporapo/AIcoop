@@ -206,14 +206,19 @@ export interface HoldView {
   readonly task_id: string;
   readonly member_id: string;
   readonly group_id: string;
+  /** `<service>.<operation>`（例：`gmail.message.send`） */
   readonly operation: string;
   readonly status: string;
+  /**
+   * 承認アプリに表示する要約（5.7.1 の2 の表の中身に、部長のコメント `manager_comment` を添えたもの）。
+   * 承認の payload の `summary_sha256` は、この値の正規化JSON の SHA-256
+   */
   readonly summary: unknown;
   readonly created_at: string;
   readonly expires_at: string;
 }
 
-/** `GET /holds` */
+/** `GET /holds?status=<状態,状態>&limit=<1〜500、既定100>`（Bearer・クッキー）。新しい順。status がなければすべての状態 */
 export interface ListHoldsResponse {
   readonly holds: readonly HoldView[];
 }
@@ -377,8 +382,8 @@ export type ApprovalDecision = "approve" | "reject";
 
 /**
  * 署名する payload（5.8 の3の3）。チャレンジは「この payload の正規化JSON の SHA-256」（base64url）。
- * `summary_sha256` は、承認アプリに表示した要約（`HoldDetailView.summary`、一時権限なら `GrantView` から
- * 作った要約）の正規化JSON の SHA-256（16進の小文字）。
+ * `summary_sha256` は、承認アプリに表示した要約（`HoldDetailView.summary`、一時権限なら `GrantView.summary`）
+ * の正規化JSON の SHA-256（16進の小文字）。
  */
 export interface ApprovalPayload {
   readonly type: ApprovalSubjectType;
@@ -508,9 +513,16 @@ export interface GrantView {
   readonly starts_at: string | null;
   readonly expires_at: string | null;
   readonly decided_by: string | null;
+  /** 部長のコメント（5.7.1 の4・5.7.3 の2） */
+  readonly manager_comment: string | null;
+  /**
+   * 承認アプリに表示する要約（「誰が・何の操作を・どのパラメーターで・何時間・理由」と部長のコメント。5.7.3 の2）。
+   * 承認の payload の `summary_sha256` は、この値の正規化JSON の SHA-256
+   */
+  readonly summary: unknown;
 }
 
-/** `GET /grants?status=<状態,状態>`（Bearer・クッキー）。新しい順 */
+/** `GET /grants?status=<状態,状態>&limit=<1〜500、既定100>`（Bearer・クッキー）。新しい順 */
 export interface ListGrantsResponse {
   readonly grants: readonly GrantView[];
 }
