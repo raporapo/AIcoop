@@ -52,7 +52,7 @@ P1 の完了条件は設計書の第14章にある。OSに依存しない部品�
 ### 次に作るもの
 
 - [x] P2：パスキーでの承認・`aicoop pair --local`・ログイン・`aicoop devices`（5.8。PR #18）
-- [ ] P2：保留と再送・部長のレビュー・一時権限（5.2.6、5.7）
+- [x] P2：保留と再送・部長のレビュー・一時権限（5.2.6、5.7）、S-1・S-4 の受け入れテスト（PR #19）
 - [ ] P2：承認アプリ（PWA）の画面
 - [ ] P2 の完了条件（S-1・S-4・S-5、V-7）を通す結合テスト
 
@@ -315,3 +315,25 @@ P1 の完了条件は設計書の第14章にある。OSに依存しない部品�
 | AP-23 | 承認アプリからの端末の取り消し | ログインしていればできる（自分の端末も）。パスキーの署名は要らない | 5.8 の4の(6)。なくした端末をすぐ止めるのは守りを強める側。消されても CLI で登録し直せる |
 
 設計書の本文では、5.10 の表に `device.state`（端末の登録・取り消し）、9.2 の表に端末・ペアリング・ログイン・承認アプリの配信の道を足す必要がある。
+
+### 保留と再送・一時権限・部長のレビュー（PR #19）
+
+| # | 内容 | いまの実装 | 理由 |
+|---|---|---|---|
+| HL-1 | state.db 版2 | `holds.resolved_at`（結果が出た時刻）・`grants.manager_comment` を足した | 「前回の実行以降に結果が出たもの」を決めるため。7.2 の grants に部長のコメントの列がない |
+| HL-2 | `drafts/send` の保留 | 取ってきた下書きの中身で `messages/send` に固めて保存・再送する（下書きは残る） | 社員は `draft.update` を持つので、ID のまま送ると承認のあとに中身を差し替えられる |
+| HL-3 | `pr.merge` の保留 | 本文に取得時の head の `sha` を付ける（指定済みで違えば警告） | 承認のあとの push で中身を変えさせない |
+| HL-4 | 下書き・PR を取れないとき | 保留にせず 403 `hold_failed`（DenyReason に追加、プロンプトにも説明） | 中身を確かめられないものを承認に回さない |
+| HL-5 | 二重に送らない方法 | 送る前に `response_path` を書く（claim）。起動時、印のある approved は送り直さず `replay_failed`、印のない approved は期限内なら送る | 5.2.6 の2「1回だけ」 |
+| HL-6 | 再送の直前の確かめ | いまの設定で判定が deny・操作が食い違う・http・既定でないポートなら送らず `replay_failed` | 設定から外した操作を送らない |
+| HL-7 | 資格ヘッダーの形 | 保存時に `Bearer GONDOLIN_SECRET_****` のような形（auth.template）を残し、再送で本物を入れる。なければ `Bearer` | Bearer 以外の資格でも送った形のまま付け直す |
+| HL-8 | 結果の範囲 | replayed・replay_failed・rejected・expired すべてを結果とし、タスク本文と on_hold_resolved の対象にする | 却下・期限切れも続きを考えるのに要る |
+| HL-9 | on_hold_resolved の完了の条件 | 「保留の結果を確かめ、続きの作業をして、report_result で報告した」 | 6.6 で書けないので固定 |
+| HL-10 | 申請中の一時権限の期限 | 申請から `holds.ttl_hours` で expired | 決まらない申請を残さない（拒否側） |
+| HL-11 | レビューのタスクのスレッド | 毎回新しい（`task-<task_id>`） | 前のレビューの外の文章を持ち込ませない |
+| HL-12 | review_decision の上限 | comment は必須・2000文字・制御文字不可。担当外と無い項目は同じ not_allowed。`k_` は not_allowed（P4） | 9.3 に上限がない |
+| HL-13 | request_access の params | 値は文字列か配列。上限の範囲の中か（glob は同じ・`*`・前方一致の `*` の中だけ）。mode は範囲を含む ceiling の項目の厳しい方 | 広さを比べられないものは範囲の外 |
+| HL-14 | 承認の対象 | pending_owner で期限内のときだけ。部長のレビュー前はオーナーも決められない | 「部長 → オーナー」の順 |
+| HL-15 | API の形 | `HoldView.operation` は `<service>.<operation>`。`HoldView.summary` は要約＋`manager_comment`（describe と同じ）。`GrantView` に `manager_comment`・`summary` を足した。`GET /holds` は status がなければすべての状態 | summary_sha256 のもとを API と describe でそろえる |
+| HL-16 | 要約に足したもの | gmail は From・添付ファイル名・警告（同名ヘッダーが複数・Resent-*・読めない文字コード）、pr.merge は head・base・merge_method | 宛先を読み違えて隠されないように |
+| HL-17 | タスク本文の保留の結果 | 20件まで、応答の本文は UTF-8 で読めるときだけ先頭4000文字 | プロンプトを大きくしすぎない |
