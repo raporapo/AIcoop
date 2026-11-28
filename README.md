@@ -6,9 +6,10 @@
 - メール送信や main へのマージのような外に出る大事な操作は、オーナーがスマホでパスキー署名して承認してから実行されます。
 - 公式の Claude Code を、そのままオーナー本人のサブスクの枠で動かします。
 
-> **状態：開発の初期段階（P1 の途中）です。AI社員に仕事をさせるところまでは、まだ動きません。**
-> `aicoop` コマンドで、会社の雛形づくり・設定の検証・資格の登録・箱のイメージづくり・監査ログの確認はできます。
-> 制御サーバーの本体（タスクの実行・資格プロキシ）は作っているところで、入るまでは `aicoop daemon`・`aicoop start` が「まだ入っていません」と言って止まります。
+> **状態：P1（1つの箱で、資格を渡さずに動く）と P2（承認と継続。承認アプリは PC のブラウザだけ）ができたところです。**
+> AI社員は vm の箱（microVM）の中で公式の Claude Code として動き、外への通信は資格プロキシのルールで判定されます。
+> 重い操作は保留され、部長AIのレビューのあと、オーナーが承認アプリでパスキーで署名して承認したときだけ1回送られます。
+> スマホからの承認・中継・GitHub のトリガー（P3）、部署間の依頼・CEO・ComfyUI（P4）は、これから作ります（設計書 14章）。
 
 ## 設計書
 
@@ -29,6 +30,7 @@ aicoop init --name "サンプル商会"   # ~/.aicoop に雛形を作る。次�
 claude setup-token                  # Claude のトークンを作る
 aicoop secret set anthropic --kind anthropic_oauth            # 貼り付ける（画面には出ません）
 aicoop secret set github --kind github_app < github-app.json  # GitHub App の資格
+#   （かんたんに試すなら、fine-grained の個人アクセストークンを --kind static_token で登録してもよい）
 aicoop check                        # 設定のエラー・警告と、動かす準備を確かめる
 aicoop image build                  # vm の箱のイメージを作る（数分）
 aicoop start                        # 制御サーバーを裏で起動する
@@ -65,6 +67,7 @@ aicoop pair --local                    # この PC のブラウザを端末と�
 - 送信系の承認は、元のリクエスト全体を開いて確かめるまで「承認する」を押せません（10.2「要約だけを見て承認しない」）。
 - 承認も却下も、確かめの窓を挟んで、パスキーで署名します。署名の期限は2分です。制御サーバーに届いていないときは、最後に受け取った状態を見られますが、承認はできません。
 - 端末の一覧と取り消しは、承認アプリの「端末」か、`aicoop devices`・`aicoop devices revoke <id>` で。
+- 保留と一時権限は、ターミナルでも `aicoop holds`（`aicoop holds <hold_id>` で詳細）・`aicoop grants` で見られます。承認・却下のコマンドはありません（承認はパスキーの署名だけ。設計書 P-4）。
 
 ## 開発の始め方
 
@@ -81,23 +84,24 @@ pnpm verify        # lint・型チェック・テストをすべて実行（コ�
 
 ## リポジトリの構成
 
-設計書の第13章のとおりに育てていきます。いまあるのは ✅ のものだけです。
+設計書の第13章のとおりに育てていきます。いまあるのは ✅ のものです。
 
 ```text
 aicoop/
 ├── packages/
-│   ├── shared/        ✅ 型、設定のスキーマ（zod）、ルールの判定、正規化JSON
-│   ├── daemon/           制御サーバー・資格プロキシ・道具ゲート・ローカルAPI
-│   ├── box-gondolin/     BoxDriver: vm
-│   ├── box-srt/          BoxDriver: srt
-│   ├── cli/              aicoop コマンド
-│   ├── approver/         承認アプリ（PWA）
-│   └── relay/            中継（Cloudflare Worker）
+│   ├── shared/        ✅ 型、設定のスキーマ（zod）と検証、ルールの判定、正規化JSON、ローカルAPI の型
+│   ├── daemon/        ✅ 制御サーバー・資格プロキシ・道具ゲート・ローカルAPI・承認の署名の確かめ
+│   ├── box-gondolin/  ✅ BoxDriver: vm（ベースイメージも、ここの image.ts で作る）
+│   ├── box-srt/          BoxDriver: srt（P4）
+│   ├── cli/           ✅ aicoop コマンド
+│   ├── approver/      ✅ 承認アプリ（PWA）
+│   └── relay/            中継（Cloudflare Worker。P3）
 ├── services/          ✅ 組み込みのサービス定義（github・gmail・web）
-├── templates/            aicoop init で配る雛形
-├── images/               vm のベースイメージの定義
-└── docs/              ✅ 設計書・開発の進め方
+├── templates/         ✅ aicoop init で配る雛形
+└── docs/              ✅ 設計書・開発の進め方（設計書にない決定の一覧も）
 ```
+
+- テストは `pnpm verify` で回ります。CI では、ubuntu の KVM で本物の vm の箱を起こして、P1 の完了条件を端から端まで確かめています（`vm e2e (P1, Gondolin, KVM)`）。
 
 ## ライセンス
 
