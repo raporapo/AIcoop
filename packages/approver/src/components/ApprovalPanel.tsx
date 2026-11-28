@@ -21,6 +21,7 @@ import {
 import { useApp } from "../lib/context.tsx";
 import { formatClock } from "../lib/time.ts";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
+import { IssueList } from "./IssueList.tsx";
 
 export type Decidable = { readonly ok: true } | { readonly ok: false; readonly reason: string };
 
@@ -42,6 +43,14 @@ export interface ApprovalPanelProps {
   readonly onSettled: (response: ApprovalAssertResponse | null) => void;
   /** 決まったあとの状態の呼び名 */
   readonly statusText: (status: string) => string;
+  /** 見出し（既定「あなたの決定」） */
+  readonly heading?: string;
+  /** 決まったあとの一言（既定「承認しました。」「却下しました。」。設定の画面では「保存しました。」など） */
+  readonly doneText?: { readonly approve: string; readonly reject: string };
+  /** ボタンの文字（既定「承認する…」「却下する…」） */
+  readonly buttonText?: { readonly approve: string; readonly reject: string };
+  /** 失敗したときの一言（既定「承認できませんでした。」「却下できませんでした。」） */
+  readonly failText?: { readonly approve: string; readonly reject: string };
 }
 
 const STEP_TEXT: Readonly<Record<SignStep, string>> = {
@@ -66,6 +75,13 @@ export function ApprovalPanel(props: ApprovalPanelProps) {
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   const messageRef = useRef<HTMLDivElement>(null);
   const busy = phase.kind === "signing";
+  const heading = props.heading ?? "あなたの決定";
+  const done = props.doneText ?? { approve: "承認しました。", reject: "却下しました。" };
+  const buttons = props.buttonText ?? { approve: "承認する…", reject: "却下する…" };
+  const fail = props.failText ?? {
+    approve: "承認できませんでした。",
+    reject: "却下できませんでした。",
+  };
 
   const blocked: string | null = !app.reachable
     ? "制御サーバーに届いていないので、承認・却下はできません（署名を確かめるのは PC です）"
@@ -107,11 +123,11 @@ export function ApprovalPanel(props: ApprovalPanelProps) {
     const { response, decision } = phase;
     return (
       <section className="decide" aria-labelledby="decide-heading">
-        <h2 id="decide-heading">あなたの決定</h2>
+        <h2 id="decide-heading">{heading}</h2>
         <div ref={messageRef} tabIndex={-1} className="notice notice-ok" role="status">
           <p>
             <span aria-hidden="true">✓ </span>
-            <strong>{decision === "approve" ? "承認しました。" : "却下しました。"}</strong>
+            <strong>{decision === "approve" ? done.approve : done.reject}</strong>
             パスキーの署名を制御サーバーが確かめ、決定を記録しました（記録 {response.approval.id}、
             {formatClock(response.approval.verified_at, { timeZone: app.timeZone })}）。
           </p>
@@ -126,7 +142,7 @@ export function ApprovalPanel(props: ApprovalPanelProps) {
 
   return (
     <section className="decide" aria-labelledby="decide-heading">
-      <h2 id="decide-heading">あなたの決定</h2>
+      <h2 id="decide-heading">{heading}</h2>
       {blocked !== null && (
         <p className="notice notice-info">
           <span aria-hidden="true">ⓘ </span>
@@ -140,7 +156,8 @@ export function ApprovalPanel(props: ApprovalPanelProps) {
           disabled={approveDisabled}
           onClick={() => setPhase({ kind: "confirm", decision: "approve" })}
         >
-          <span aria-hidden="true">✓ </span>承認する…
+          <span aria-hidden="true">✓ </span>
+          {buttons.approve}
         </button>
         <button
           type="button"
@@ -148,7 +165,8 @@ export function ApprovalPanel(props: ApprovalPanelProps) {
           disabled={busy || blocked !== null}
           onClick={() => setPhase({ kind: "confirm", decision: "reject" })}
         >
-          <span aria-hidden="true">✕ </span>却下する…
+          <span aria-hidden="true">✕ </span>
+          {buttons.reject}
         </button>
       </div>
       {blocked === null && props.approveBlocked && (
@@ -172,10 +190,13 @@ export function ApprovalPanel(props: ApprovalPanelProps) {
         <div ref={messageRef} tabIndex={-1} className="notice notice-error" role="alert">
           <p>
             <span aria-hidden="true">✕ </span>
-            <strong>{phase.decision === "approve" ? "承認" : "却下"}できませんでした。</strong>
+            <strong>{phase.decision === "approve" ? fail.approve : fail.reject}</strong>
             {failureView.message}
           </p>
           <p>{failureView.hint}</p>
+          {phase.failure.kind === "api" && phase.failure.error.issues !== undefined && (
+            <IssueList issues={phase.failure.error.issues} />
+          )}
           {failureView.retry && blocked === null && (
             <button
               type="button"

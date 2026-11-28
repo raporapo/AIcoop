@@ -165,6 +165,20 @@ export function describeSignFailure(failure: SignFailure): FailureView {
             ...base,
             hint: `パスキーの署名を確かめられませんでした。決定は効いていません。${RETRY}`,
           };
+        // 5.14 の4の4：変更を作ったあとでファイル・資格が書き換えられた（何も書いていない。変更は捨てられた）
+        case "conflict":
+          return {
+            ...base,
+            hint: "何も書いていません。いまの中身を読み直してから、もう一度変更を作ってください",
+            retry: false,
+          };
+        // 5.14 の4の2：署名のあとの検証・読み直しで設定にエラーが見つかった（保存していない・元に戻した）
+        case "config_invalid":
+          return {
+            ...base,
+            hint: "保存していません。エラーを直してから、もう一度「確かめる」からやり直してください",
+            retry: false,
+          };
         case "not_pending":
           return {
             ...base,

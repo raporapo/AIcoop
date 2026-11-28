@@ -16,6 +16,8 @@ export type Route =
   | { readonly name: "devices" }
   | { readonly name: "host-tools" }
   | { readonly name: "ceo" }
+  | { readonly name: "settings" }
+  | { readonly name: "secrets" }
   | { readonly name: "pair"; readonly code: string | null }
   | { readonly name: "not-found"; readonly hash: string };
 
@@ -61,6 +63,8 @@ export function parseRoute(hash: string): Route {
     case "devices":
     case "host-tools":
     case "ceo":
+    case "settings":
+    case "secrets":
       return b === undefined ? { name: a } : notFound;
     default:
       return notFound;

@@ -800,3 +800,87 @@ pre.data {
     font-size: 1.3rem;
   }
 }
+
+/* ---- 設定の画面・資格の画面（5.14 の4・5） ---- */
+
+.field {
+  display: grid;
+  gap: 4px;
+  margin: 12px 0;
+  max-width: 720px;
+}
+
+.field label {
+  font-weight: 700;
+}
+
+.field input,
+.field select,
+.editor {
+  font: inherit;
+  min-height: 44px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text);
+}
+
+.editor {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 4px 0 8px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.9rem;
+  resize: vertical;
+}
+
+.actions,
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.link-button {
+  font: inherit;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--focus);
+  text-decoration: underline;
+  cursor: pointer;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+pre.diff {
+  margin: 4px 0 12px;
+  padding: 8px;
+  overflow-x: auto;
+  background: var(--surface);
+  border-radius: var(--radius);
+  font-size: 0.85rem;
+}
+
+.diff-add {
+  color: var(--ok);
+  background: var(--ok-bg);
+}
+
+.diff-del {
+  color: var(--bad);
+  background: var(--bad-bg);
+}
+
+.diff-hunk {
+  color: var(--info);
+}
+
+.diff-head {
+  color: var(--muted);
+}
+
+.diff-figure {
+  margin: 0;
+}
