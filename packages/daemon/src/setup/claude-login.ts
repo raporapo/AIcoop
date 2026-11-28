@@ -208,6 +208,12 @@ export function createClaudeLogin(deps: ClaudeLoginDeps): ClaudeLogin {
           "Windows では Claude へのログインを始められません。WSL2 の中で制御サーバーを動かしてください（設計書 4.3）",
         );
       }
+      if (deps.platform === "darwin") {
+        // macOS の script（BSD）は、標準入力が端末でないと擬似端末を作れない（tcgetattr が失敗する）
+        throw unavailable(
+          "macOS では、制御サーバーから Claude へのログインを始められません（端末のない場所では擬似端末を作れないため）。ターミナルで aicoop login を実行してください",
+        );
+      }
       const claude = findClaude();
       if (!claude) {
         throw unavailable(
