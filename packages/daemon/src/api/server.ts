@@ -39,6 +39,7 @@ import { cancelTask, createTask, getTask, InvalidTaskTransitionError } from "../
 import { getUsageState, type UsageState } from "../db/usage.ts";
 import type { AicoopPaths } from "../paths.ts";
 import type { RunHandle } from "../run/types.ts";
+import type { Settings } from "../settings/service.ts";
 import type { RunnableCheck } from "../triggers/runnable.ts";
 import { actorOf, authenticate, requireBearer } from "./auth.ts";
 import {
@@ -52,6 +53,7 @@ import {
   type GetTaskResponse,
   type ListAuditResponse,
   type ListTasksResponse,
+  MAX_CONFIG_CHANGE_BODY_BYTES,
   type ReloadResponse,
   type RunningBoxView,
   type ShutdownResponse,
@@ -65,6 +67,7 @@ import {
 import { appRoutes } from "./routes/app.ts";
 import { protectedApprovalRoutes, publicApprovalRoutes } from "./routes/approvals.ts";
 import { registerHoldRoutes } from "./routes/holds.ts";
+import { settingsRoutes } from "./routes/settings.ts";
 
 /** 本文の上限 */
 export const MAX_BODY_BYTES = 64 * 1024;
@@ -105,6 +108,8 @@ export interface ApiControl {
   readonly approvals: ApprovalService;
   /** 承認アプリの静的ファイル（packages/approver/dist） */
   readonly approverDir: string;
+  /** 設定の画面と資格の画面（5.14 の4・5） */
+  readonly settings: Settings;
 }
 
 /** 道の中で投げて、決まった形の失敗を返す */
@@ -276,17 +281,27 @@ export function createApiApp(control: ApiControl): Hono {
     await next();
   });
 
-  // 2. 本文の上限
-  app.use(
-    "*",
+  // 2. 本文の上限（設定の画面の変更 POST /config/changes だけ 1 MiB。ほかは 64 KiB）
+  const limitOf = (maxSize: number) =>
     bodyLimit({
-      maxSize: MAX_BODY_BYTES,
+      maxSize,
       onError: (c) =>
         c.json(
-          errorBody("invalid_input", `本文が大きすぎます（${MAX_BODY_BYTES / 1024} KiB まで）`),
+          errorBody(
+            "invalid_input",
+            maxSize >= 1024 * 1024
+              ? `本文が大きすぎます（${maxSize / 1024 / 1024} MiB まで）`
+              : `本文が大きすぎます（${maxSize / 1024} KiB まで）`,
+          ),
           413,
         ),
-    }),
+    });
+  const defaultLimit = limitOf(MAX_BODY_BYTES);
+  const configChangeLimit = limitOf(MAX_CONFIG_CHANGE_BODY_BYTES);
+  app.use("*", (c, next) =>
+    c.req.method === "POST" && c.req.path === `${API_PREFIX}/config/changes`
+      ? configChangeLimit(c, next)
+      : defaultLimit(c, next),
   );
 
   app.use("*", async (c, next) => {
@@ -511,6 +526,9 @@ export function createApiApp(control: ApiControl): Hono {
 
   // 端末の登録（CLI）・ログイン中の端末・端末・承認の署名（5.8）
   api.route("/", protectedApprovalRoutes(approvalRoutes));
+
+  // 設定の画面と資格の画面（5.14 の4・5）。PC のブラウザのセッションだけ（requireLocalSession）
+  api.route("/", settingsRoutes({ settings: control.settings, logger }));
 
   app.route(API_PREFIX, api);
 

@@ -46,8 +46,10 @@ export type ApiErrorCode =
   | "unknown_member"
   /** その状態ではできない（終わったタスクの取り消しなど） */
   | "invalid_state"
-  /** 設定にエラーがある（reload） */
+  /** 設定にエラーがある（reload・設定の画面の変更） */
   | "config_invalid"
+  /** 変更を作ったあとで、ファイル・資格が書き換えられた（設定・資格の画面。5.14 の4の4）。何も書いていない */
+  | "conflict"
   | "internal"
   /** 承認・ペアリング（P2）のエラー */
   | ApprovalErrorCode;
@@ -376,7 +378,11 @@ export type ApprovalSubjectType =
   | "tool_pin"
   | "human_send"
   | "human_accept"
-  | "human_result";
+  | "human_result"
+  /** 設定の画面の保存（5.14 の4。`POST /config/changes` で作った変更の ID） */
+  | "config_change"
+  /** 資格の画面の登録・置き換え・削除（5.14 の5。`POST /secrets/changes` で作った変更の ID） */
+  | "secret_change";
 
 export type ApprovalDecision = "approve" | "reject";
 
@@ -525,4 +531,122 @@ export interface GrantView {
 /** `GET /grants?status=<状態,状態>&limit=<1〜500、既定100>`（Bearer・クッキー）。新しい順 */
 export interface ListGrantsResponse {
   readonly grants: readonly GrantView[];
+}
+
+// ---- 設定の画面と資格の画面（5.14 の4・5。PC のブラウザのセッションだけ） ----
+
+/**
+ * 設定の画面で一覧・読み書きできるファイル（`~/.aicoop` からの `/` 区切りの相対パス。5.14 の4の1）：
+ * 6.1 の yaml、`services/<名前>.yaml`、`prompts/` の下の md（フォルダは2段まで）。
+ * これに合わないパス（`secrets.json`・`state.db`・`..`・`%2e`・`\`・絶対パスなど）は、一覧にも出さず、読み書きもしない
+ */
+export const CONFIG_FILE_PATH_PATTERN =
+  /^(?:(?:aicoop|groups|roles|members|triggers|mcp_servers|host_tools)\.yaml|services\/[a-z0-9][a-z0-9-]{0,39}\.yaml|prompts\/(?:[A-Za-z0-9][A-Za-z0-9_-]{0,63}\/){0,2}[A-Za-z0-9][A-Za-z0-9_-]{0,63}\.md)$/;
+
+/** 設定の画面で読み書きできる、1つのファイルの大きさの上限（バイト） */
+export const MAX_CONFIG_FILE_BYTES = 256 * 1024;
+/** 1回の変更で変えられるファイルの数 */
+export const MAX_CONFIG_CHANGE_FILES = 20;
+/** `POST /config/changes` の本文の上限（バイト。ほかの道は 64 KiB） */
+export const MAX_CONFIG_CHANGE_BODY_BYTES = 1024 * 1024;
+/** 署名を待つ変更の期限（作ってから10分） */
+export const SETTINGS_CHANGE_TTL_MS = 10 * 60 * 1000;
+
+export interface ConfigFileView {
+  /** `~/.aicoop` からの相対パス（例：`groups.yaml`・`prompts/roles/implementer.md`） */
+  readonly path: string;
+  readonly size: number;
+  /** 中身の SHA-256（16進の小文字） */
+  readonly sha256: string;
+  readonly modified_at: string;
+}
+
+/** `GET /config/files` */
+export interface ListConfigFilesResponse {
+  readonly files: readonly ConfigFileView[];
+}
+
+/** `GET /config/files/{path}` */
+export interface GetConfigFileResponse {
+  readonly path: string;
+  /** UTF-8 の中身 */
+  readonly content: string;
+  readonly sha256: string;
+}
+
+export interface ConfigChangeFileInput {
+  readonly path: string;
+  /** 新しい中身（UTF-8） */
+  readonly content: string;
+  /** 変更のもとにした中身の SHA-256。新しいファイルなら null */
+  readonly base_sha256: string | null;
+}
+
+/** `POST /config/changes` */
+export interface CreateConfigChangeRequest {
+  readonly files: readonly ConfigChangeFileInput[];
+}
+
+export interface ConfigChangeFileSummary {
+  readonly path: string;
+  /** 変える前の SHA-256。新しいファイルなら null */
+  readonly before_sha256: string | null;
+  readonly after_sha256: string;
+  /** unified diff（`--- a/<path>`・`+++ b/<path>` から） */
+  readonly diff: string;
+}
+
+/** 承認の要約（`summary_sha256` = この値の正規化JSON の SHA-256） */
+export interface ConfigChangeSummary {
+  readonly files: readonly ConfigChangeFileSummary[];
+}
+
+/**
+ * `POST /config/changes` の応答（201）。設定にエラーがあれば 422 `config_invalid`（`issues` つき）で、変更は作らない。
+ * 署名（`POST /approvals/intent` の `type: "config_change"`）が通るまで、ファイルは書かない
+ */
+export interface CreateConfigChangeResponse {
+  readonly id: string;
+  readonly summary: ConfigChangeSummary;
+  /** 検証の警告（6.10 の W-xxx）。そのまま保存できる */
+  readonly warnings: readonly ConfigIssue[];
+  readonly expires_at: string;
+}
+
+export type SecretKindName = "static_token" | "github_app" | "google_oauth" | "anthropic_oauth";
+
+/** 資格の一覧の1行（中身は出さない。5.14 の5） */
+export interface SecretView {
+  readonly id: string;
+  readonly kind: SecretKindName;
+  readonly updated_at: string;
+}
+
+/** `GET /secrets` */
+export interface ListSecretsResponse {
+  readonly secrets: readonly SecretView[];
+}
+
+/**
+ * `POST /secrets/changes`：登録・置き換えなら `{id, kind, value}`、削除なら `{id, delete: true}`。
+ * `value` は種類の形の JSON のオブジェクト（5.2.8 の4）。`static_token`・`anthropic_oauth` はトークンの文字列でもよい
+ */
+export type CreateSecretChangeRequest =
+  | { readonly id: string; readonly kind: SecretKindName; readonly value: unknown }
+  | { readonly id: string; readonly delete: true };
+
+/** 資格の変更の要約（中身は含めない。5.14 の5） */
+export interface SecretChangeSummary {
+  readonly id: string;
+  /** 資格の種類（削除なら、いま登録されている種類） */
+  readonly kind: SecretKindName;
+  /** 登録（まだない）・置き換え（もうある）・削除 */
+  readonly action: "create" | "replace" | "delete";
+}
+
+/** `POST /secrets/changes` の応答（201）。署名が通るまで、資格は変えない */
+export interface CreateSecretChangeResponse {
+  readonly id: string;
+  readonly summary: SecretChangeSummary;
+  readonly expires_at: string;
 }

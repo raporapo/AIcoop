@@ -103,6 +103,8 @@ export const SUBJECT_TYPE_LABELS: Readonly<Record<ApprovalSubjectType, string>> 
   human_send: "人宛ての依頼",
   human_accept: "人宛ての依頼の受け入れ",
   human_result: "人宛ての依頼の結果",
+  config_change: "設定の変更",
+  secret_change: "資格の変更",
 };
 
 /** 知らない値（新しい版の daemon など）は、そのままの値を見せる */
@@ -162,6 +164,7 @@ export const AUDIT_KIND_LABELS: Readonly<Record<string, string>> = {
   "ticket.state": "依頼票の状態",
   approval: "承認・却下の署名",
   "config.load": "設定の読み込み",
+  "config.change": "設定の画面での変更",
   "secret.change": "資格の登録・削除",
   "box.lifecycle": "箱の起動・停止",
   quarantine: "ファイルの隔離",

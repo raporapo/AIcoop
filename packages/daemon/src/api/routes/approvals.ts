@@ -41,10 +41,12 @@ export interface ApprovalRoutesOptions {
 }
 
 function errorBody(error: ApprovalFailure): ApiError {
-  return { error: error.code, message: error.message };
+  return error.issues === undefined
+    ? { error: error.code, message: error.message }
+    : { error: error.code, message: error.message, issues: error.issues };
 }
 
-function withErrors(app: Hono, logger: Logger): Hono {
+export function withErrors(app: Hono, logger: Logger): Hono {
   app.onError((error, c) => {
     if (error instanceof ApprovalFailure) return c.json(errorBody(error), error.status);
     logger.error(
@@ -61,7 +63,7 @@ function withErrors(app: Hono, logger: Logger): Hono {
 }
 
 /** 本文を JSON として読む（Content-Type が JSON でなければ 415、読めなければ 400） */
-async function jsonBody(c: Context): Promise<unknown> {
+export async function jsonBody(c: Context): Promise<unknown> {
   const type = c.req.header("content-type") ?? "";
   if (!/^application\/json(?:\s*;|$)/i.test(type)) {
     throw new ApprovalFailure(

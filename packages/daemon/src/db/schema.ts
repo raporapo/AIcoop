@@ -5,6 +5,7 @@
  * 時刻は UTC の ISO 8601 文字列、JSON は文字列で保存する（7.1）。
  */
 import type { BoxKind, TaskStatus, TriggerKind } from "@aicoop/shared";
+import type { ApprovalSubjectType } from "@aicoop/shared/api";
 import { index, integer, primaryKey, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 export const tasks = sqliteTable(
@@ -167,9 +168,7 @@ export const tickets = sqliteTable(
 
 export const approvals = sqliteTable("approvals", {
   id: text("id").primaryKey(),
-  subjectType: text("subject_type")
-    .$type<"hold" | "grant" | "tool_pin" | "human_send" | "human_accept" | "human_result">()
-    .notNull(),
+  subjectType: text("subject_type").$type<ApprovalSubjectType>().notNull(),
   subjectId: text("subject_id").notNull(),
   decision: text("decision").$type<"approve" | "reject">().notNull(),
   deviceId: text("device_id").notNull(),

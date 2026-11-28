@@ -173,6 +173,32 @@ export const requireCookie: MiddlewareHandler = async (c, next) => {
   return next();
 };
 
+/**
+ * この道は、PC のブラウザの承認アプリのセッション（`localhost` のクッキー）だけ（5.14 の6、D-27、T-15）。
+ * 準備・設定・資格・イメージの道に付ける。
+ *
+ * - CLI の Bearer トークンからは受けない（401。CLI には同じことをするコマンドがある）
+ * - クッキーの確かめ（Host が `127.0.0.1`・`localhost`、POST の `Origin` が `http://localhost:<port>`）は
+ *   `authenticate` で済んでいる
+ * - **P3 の中継の `rpc_request`（9.4）から来た要求は、ここで弾く場所**：中継から来たものは、道がないもの
+ *   （404 `not_found`）として扱う。中継の呼び手（Caller の新しい種類）を足すときは、ここで 404 を返すこと
+ */
+export const requireLocalSession: MiddlewareHandler = async (c, next) => {
+  const caller = callerOf(c);
+  if (caller?.kind === "cookie") return next();
+  if (caller?.kind === "bearer") {
+    return c.json(
+      errorBody(
+        "unauthorized",
+        "この操作は、PC のブラウザの承認アプリ（パスキーでログインしたもの）からだけできます。CLI では aicoop secret・設定のファイルの編集と aicoop reload を使ってください",
+      ),
+      401,
+    );
+  }
+  // 中継などの、ほかの呼び手（P3）：道がないものとして扱う（D-27）
+  return c.json(errorBody("not_found", "その道はありません"), 404);
+};
+
 /** 認証なしの道の POST：`Origin` が承認アプリのオリジンでなければ 403 */
 export function requireSameOrigin(port: () => number): MiddlewareHandler {
   return async (c, next) => {

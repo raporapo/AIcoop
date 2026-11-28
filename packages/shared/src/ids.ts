@@ -16,6 +16,8 @@ export const ID_PREFIXES = {
   ticket: "k_",
   approval: "a_",
   device: "d_",
+  /** 設定・資格の画面の、署名を待つ変更（5.14 の4・5。daemon のメモリの中だけ） */
+  change: "x_",
 } as const;
 
 export type IdKind = keyof typeof ID_PREFIXES;

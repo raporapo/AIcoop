@@ -253,4 +253,49 @@ describe("loadConfig（6.1）", () => {
     write("aicoop.yaml", stringify({ company: COMPANY, daemon: { home: "~/elsewhere" } }));
     expect(issuesOf(load()).map((i) => `${i.code} ${i.path}`)).toEqual(["E-013 daemon.home"]);
   });
+
+  describe("5.14 の4の2：書き換えたファイルを重ねて検証する（overrides）", () => {
+    it("上書きした中身で検証し、本物のファイルは書き換えない", () => {
+      const before = readFileSync(join(home, "groups.yaml"), "utf8");
+      const next = stringify({
+        groups: { ...baseGroups, dev: { ...baseGroups.dev, name: "開発二部" } },
+      });
+      const result = load({ overrides: new Map([["groups.yaml", next]]) });
+      expect(issuesOf(result)).toEqual([]);
+      if (!result.ok) return;
+      expect(result.config.groups.dev?.name).toBe("開発二部");
+      expect(result.config.fileHashes["groups.yaml"]).toBe(
+        createHash("sha256").update(next).digest("hex"),
+      );
+      expect(readFileSync(join(home, "groups.yaml"), "utf8")).toBe(before);
+    });
+
+    it("エラーのある上書きは ok: false（誤りの元は上書きしたファイル）", () => {
+      const result = load({ overrides: new Map([["members.yaml", "members: ["]]) });
+      expect(result.ok).toBe(false);
+      expect(issuesOf(result).map((i) => `${i.code} ${i.source}`)).toEqual(["E-013 members.yaml"]);
+    });
+
+    it("まだないファイル（prompts・triggers.yaml）も、上書きとして足せる", () => {
+      const result = load({
+        overrides: new Map([
+          ["prompts/members/dev-implementer.md", "# 個人への調整\n"],
+          ["triggers.yaml", stringify({ triggers: [] })],
+        ]),
+      });
+      expect(issuesOf(result)).toEqual([]);
+      if (!result.ok) return;
+      expect(result.config.prompts.get("members/dev-implementer.md")).toBe("# 個人への調整\n");
+      expect(result.config.fileHashes["triggers.yaml"]).toBeDefined();
+      expect(existsSync(join(home, "prompts/members/dev-implementer.md"))).toBe(false);
+    });
+
+    it("まだない services/*.yaml も、上書きとして読む", () => {
+      const result = load({
+        overrides: new Map([["services/github.yaml", "これは: [YAMLではない"]]),
+      });
+      expect(result.ok).toBe(false);
+      expect(issuesOf(result).map((i) => i.source)).toEqual(["services/github.yaml"]);
+    });
+  });
 });

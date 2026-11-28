@@ -61,6 +61,8 @@ export const APPROVAL_SUBJECT_TYPES: readonly ApprovalSubjectType[] = [
   "human_send",
   "human_accept",
   "human_result",
+  "config_change",
+  "secret_change",
 ];
 const DECISIONS: readonly ApprovalDecision[] = ["approve", "reject"];
 /** 対象の ID：印字できる ASCII で1〜200文字 */
